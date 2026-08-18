@@ -115,7 +115,12 @@ async function sha256Hex(text: string): Promise<string> {
 }
 
 function jsonOk(data: unknown): Response {
-  return Response.json(data, { headers: { 'Cache-Control': 'public, max-age=3600' } });
+  return new Response(JSON.stringify(data, null, 2), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=3600',
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -133,48 +138,46 @@ export async function handleWellKnown(request: Request): Promise<Response | null
 
   // ── API Catalog (IETF draft-ietf-httpapi-api-catalog) ────────────────────
   if (pathname === '/.well-known/api-catalog') {
-    return new Response(
-      JSON.stringify({
-        linkset: [
-          {
-            anchor: `${base}/`,
-            'service-desc': [{ href: `${base}/mcp`, type: 'application/json' }],
-            'service-doc': [
-              {
-                href: 'https://github.com/pilotariak/azkena/blob/main/AGENTS.md',
-                type: 'text/markdown',
-                title: 'Developer guide',
-              },
-              { href: 'https://github.com/pilotariak/azkena', type: 'text/html' },
-            ],
-            'service-meta': [
-              {
-                href: `${base}/.well-known/ai-catalog.json`,
-                type: 'application/json',
-                title: 'AI catalog (ARD)',
-              },
-              {
-                href: `${base}/.well-known/mcp/server-card.json`,
-                type: 'application/json',
-                title: 'MCP Server Card',
-              },
-              {
-                href: `${base}/.well-known/agent-skills/index.json`,
-                type: 'application/json',
-                title: 'Agent Skills Index',
-              },
-            ],
-            license: [{ href: 'https://github.com/pilotariak/azkena/blob/main/LICENSE' }],
-          },
-        ],
-      }),
-      {
-        headers: {
-          'Content-Type': 'application/linkset+json',
-          'Cache-Control': 'public, max-age=3600',
+    const catalog = {
+      linkset: [
+        {
+          anchor: `${base}/`,
+          'service-desc': [{ href: `${base}/mcp`, type: 'application/json' }],
+          'service-doc': [
+            {
+              href: 'https://github.com/pilotariak/azkena/blob/main/AGENTS.md',
+              type: 'text/markdown',
+              title: 'Developer guide',
+            },
+            { href: 'https://github.com/pilotariak/azkena', type: 'text/html' },
+          ],
+          'service-meta': [
+            {
+              href: `${base}/.well-known/ai-catalog.json`,
+              type: 'application/json',
+              title: 'AI catalog (ARD)',
+            },
+            {
+              href: `${base}/.well-known/mcp/server-card.json`,
+              type: 'application/json',
+              title: 'MCP Server Card',
+            },
+            {
+              href: `${base}/.well-known/agent-skills/index.json`,
+              type: 'application/json',
+              title: 'Agent Skills Index',
+            },
+          ],
+          license: [{ href: 'https://github.com/pilotariak/azkena/blob/main/LICENSE' }],
         },
+      ],
+    };
+    return new Response(JSON.stringify(catalog, null, 2), {
+      headers: {
+        'Content-Type': 'application/linkset+json',
+        'Cache-Control': 'public, max-age=3600',
       },
-    );
+    });
   }
 
   // ── AI Catalog (ARD) ──────────────────────────────────────────────────────
