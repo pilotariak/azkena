@@ -4,24 +4,23 @@
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { z } from 'zod';
 import { listSpecialties } from '../frontis/client.js';
 import type { Env } from '../types.js';
-
-const LEAGUE = z
-  .enum(['lcapb', 'lidfpb', 'ccapb', 'ctpb'])
-  .describe('League code (lcapb · lidfpb · ccapb · ctpb)');
+import { LEAGUE, READ_ONLY, toolError } from './common.js';
 
 export function registerSpecialtiesTools(server: McpServer, env: Env): void {
   server.tool(
     'list_specialties',
     'List Basque pelota disciplines (trinquet, chistera, place libre, etc.) for a league. Use returned IDs when filtering results.',
     { league: LEAGUE },
+    READ_ONLY,
     async ({ league }) => {
-      const specialties = await listSpecialties(env.FRONTIS_URL, league);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(specialties, null, 2) }],
-      };
+      try {
+        const specialties = await listSpecialties(env.FRONTIS_URL, league);
+        return { content: [{ type: 'text', text: JSON.stringify(specialties, null, 2) }] };
+      } catch (err) {
+        return toolError(err);
+      }
     },
   );
 }
