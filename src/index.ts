@@ -4,7 +4,7 @@
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { handleWellKnown } from './discovery.js';
 import type { Env } from './types.js';
 import { registerTools } from './tools/index.js';
@@ -42,7 +42,7 @@ export default {
 
     // Stateless mode: sessionIdGenerator undefined means no persistent session.
     // Each request creates a fresh server — correct for Cloudflare Workers.
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
     return transport.handleRequest(request);
   },

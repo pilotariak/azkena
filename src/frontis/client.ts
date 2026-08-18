@@ -149,7 +149,7 @@ export async function listCompetitions(
   return data.competitions;
 }
 
-export interface ResultFilters {
+export interface ResultFilters extends Record<string, string | undefined> {
   competitionId?: string;
   specialtyId?: string;
   categoryId?: string;
