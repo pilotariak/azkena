@@ -3,6 +3,6 @@
 
 headerPath = "hack/header.txt"
 
-includes = ["*.yml", "*.yaml", "*.toml", "*.sh", "Makefile"]
+includes = ["*.ts", "*.yml", "*.yaml", "*.toml", "*.sh", "Makefile"]
 
-excludes = ["hack/header.txt", "*.json", "vendor/*", "node_modules/*", "target/*", ".git/*"]
+excludes = ["hack/header.txt", "*.json", "vendor/*", "node_modules/*", "target/*", "dist/*", ".wrangler/*", ".git/*"]

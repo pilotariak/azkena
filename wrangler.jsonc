@@ -1,0 +1,40 @@
+// SPDX-FileCopyrightText: Copyright (C) Nicolas Lamirault <nicolas.lamirault@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "azkena",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-18",
+  "compatibility_flags": ["nodejs_compat_v2"],
+  // Default vars for `wrangler dev` (no --env flag).
+  // Staging/production override these below.
+  "vars": {
+    "ENVIRONMENT": "development",
+    "FRONTIS_URL": "https://frontis-gateway.pilotariak.com/graphql",
+    "LOG_LEVEL": "debug"
+  },
+  "env": {
+    "staging": {
+      "name": "azkena-staging",
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "FRONTIS_URL": "https://frontis-gateway.pilotariak.com/graphql",
+        "LOG_LEVEL": "debug"
+      }
+    },
+    "production": {
+      "name": "azkena",
+      "vars": {
+        "ENVIRONMENT": "production",
+        "FRONTIS_URL": "https://frontis-gateway.pilotariak.com/graphql",
+        "LOG_LEVEL": "info"
+      }
+    }
+  },
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  }
+}

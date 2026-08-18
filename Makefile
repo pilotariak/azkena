@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (C) Nicolas Lamirault <nicolas.lamirault@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-BANNER = P R O J E C T  N A M E
+BANNER = A Z K E N A
 
 SHELL = /bin/bash -o pipefail
 
@@ -50,6 +50,57 @@ check-%:
 		echo -e "$(ERROR_COLOR)$(KO)$(NO_COLOR) $*"; \
 	fi
 
+##@ Development
+
+.PHONY: install
+install: ## Install dependencies
+	@echo -e "$(INFO)$(INFO_COLOR)[Install] Installing dependencies$(NO_COLOR)"
+	npm install
+
+.PHONY: dev
+dev: ## Start local dev server (wrangler dev)
+	@echo -e "$(INFO)$(INFO_COLOR)[Dev] Starting Cloudflare Worker$(NO_COLOR)"
+	bunx wrangler dev
+
+.PHONY: build
+build: ## Type-check with tsc
+	@echo -e "$(INFO)$(INFO_COLOR)[Build] Type checking$(NO_COLOR)"
+	npx tsc --noEmit
+
+.PHONY: test
+test: ## Run tests
+	@echo -e "$(INFO)$(INFO_COLOR)[Test] Running vitest$(NO_COLOR)"
+	npx vitest
+
+.PHONY: lint
+lint: ## Run dprint linter
+	@echo -e "$(INFO)$(INFO_COLOR)[Lint] Running dprint$(NO_COLOR)"
+	bunx dprint check
+
+.PHONY: fmt
+fmt: ## Format with dprint
+	@echo -e "$(INFO)$(INFO_COLOR)[Format] Running dprint$(NO_COLOR)"
+	bunx dprint fmt
+
+##@ Deployment
+
+.PHONY: deploy
+deploy: ## Deploy to production
+	@echo -e "$(INFO)$(INFO_COLOR)[Deploy] Deploying to production$(NO_COLOR)"
+	bunx wrangler deploy --env production
+
+.PHONY: deploy-staging
+deploy-staging: ## Deploy to staging
+	@echo -e "$(INFO)$(INFO_COLOR)[Deploy] Deploying to staging$(NO_COLOR)"
+	bunx wrangler deploy --env staging
+
+.PHONY: logs
+logs: ## Tail live worker logs
+	bunx wrangler tail
+
+##@ Maintenance
+
 .PHONY: clean
 clean: ## Clean project
 	@echo -e "$(INFO)$(INFO_COLOR)[Clean] Processing $(NO_COLOR)"
+	rm -rf node_modules dist .wrangler
