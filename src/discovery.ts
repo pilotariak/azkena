@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { VERSION } from './version.js';
+
 // Tool descriptions — keep in sync with src/tools/*.ts
 const TOOL_CATALOG = [
   {
@@ -213,7 +215,7 @@ export async function handleWellKnown(request: Request): Promise<Response | null
       serverInfo: {
         name: 'azkena',
         title: 'Azkena — Pilotariak MCP server',
-        version: '0.1.0',
+        version: VERSION,
         description:
           'Read-only MCP server for the Pilotariak Basque pelota platform. ' +
           'Exposes competitions, clubs, categories, specialties, and match results ' +
