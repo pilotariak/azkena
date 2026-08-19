@@ -6,6 +6,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { handleWellKnown } from './discovery.js';
+import { handleLanding } from './handlers/landing.js';
 import { registerTools } from './tools/index.js';
 import type { Env } from './types.js';
 import { VERSION } from './version.js';
@@ -51,7 +52,15 @@ export default {
     }
 
     if (url.pathname === '/') {
-      return withHeaders(Response.json({ name: 'azkena', version: VERSION, status: 'ok' }));
+      // Landing page has its own Content-Security-Policy (allows fonts + inline script).
+      // Apply only non-CSP security headers so the page renders correctly.
+      const landing = handleLanding(request);
+      const headers = new Headers(landing.headers);
+      for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
+        if (k !== 'Content-Security-Policy') headers.set(k, v);
+      }
+      for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
+      return new Response(landing.body, { status: landing.status, headers });
     }
 
     if (url.pathname === '/version') {
