@@ -85,7 +85,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "azkena": {
-      "url": "https://azkena.pilotariak.workers.dev/mcp",
+      "url": "https://mcp.pilotariak.com/mcp",
       "transport": "streamable-http",
       "headers": {
         "Authorization": "Bearer <MCP_API_TOKEN>"
@@ -105,11 +105,11 @@ make test            # vitest
 
 ## Environments
 
-| Env | Worker name | Notes |
-|---|---|---|
-| `development` (default) | `azkena` (local) | `wrangler dev`, no auth required |
-| `staging` | `azkena-staging` | `wrangler deploy --env staging` |
-| `production` | `azkena` | `wrangler deploy --env production` |
+| Env | Worker name | URL | Notes |
+|---|---|---|---|
+| `development` (default) | `azkena` (local) | `http://localhost:8787` | `wrangler dev`, no auth required |
+| `staging` | `azkena-staging` | `https://azkena-staging.pilotariak.workers.dev` | `wrangler deploy --env staging` |
+| `production` | `azkena` | `https://mcp.pilotariak.com` | `wrangler deploy --env production` |
 
 Key vars (set per env in `wrangler.jsonc`):
 

@@ -24,6 +24,12 @@
     },
     "production": {
       "name": "azkena",
+      "routes": [
+        {
+          "pattern": "mcp.pilotariak.com/*",
+          "custom_domain": true
+        }
+      ],
       "vars": {
         "ENVIRONMENT": "production",
         "FRONTIS_URL": "https://frontis-gateway.pilotariak.com/graphql",
