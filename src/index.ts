@@ -54,6 +54,10 @@ export default {
       return withHeaders(Response.json({ name: 'azkena', version: VERSION, status: 'ok' }));
     }
 
+    if (url.pathname === '/version') {
+      return withHeaders(Response.json({ version: VERSION }));
+    }
+
     if (url.pathname.startsWith('/.well-known/')) {
       const response = await handleWellKnown(request);
       return withHeaders(response ?? new Response('Not Found', { status: 404 }));
