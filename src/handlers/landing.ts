@@ -11,7 +11,13 @@ export function handleLanding(request: Request): Response {
   }
 
   return new Response(renderHtml(), {
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      // All CSS/JS is inline (no third-party scripts) except Google Fonts.
+      // 'unsafe-inline' is required for the inline <style>/<script>/style attrs.
+      'Content-Security-Policy':
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; base-uri 'none'; form-action 'none'",
+    },
   });
 }
 
