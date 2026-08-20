@@ -56,7 +56,9 @@ Create `.dev.vars` (git-ignored) for local secrets:
 MCP_API_TOKEN=<any string for local testing>
 ```
 
-`MCP_API_TOKEN` is optional — if unset, the server accepts all requests (development only).
+`MCP_API_TOKEN` is optional — if unset, the server only accepts requests from loopback hosts
+(`localhost`, `127.0.0.1`, `::1`) for local development. Any deployed worker must have it set,
+otherwise `/mcp` refuses all requests with `401` (fail-closed). Do not gate this on `ENVIRONMENT`.
 
 ## Running Locally
 
