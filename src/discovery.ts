@@ -169,6 +169,16 @@ export async function handleWellKnown(request: Request): Promise<Response | null
               type: 'application/json',
               title: 'Agent Skills Index',
             },
+            {
+              href: `${base}/.well-known/oauth-authorization-server`,
+              type: 'application/json',
+              title: 'OAuth 2.0 Authorization Server Metadata (RFC 8414)',
+            },
+            {
+              href: `${base}/.well-known/oauth-protected-resource`,
+              type: 'application/json',
+              title: 'OAuth 2.0 Protected Resource Metadata (RFC 8414)',
+            },
           ],
           license: [{ href: 'https://github.com/pilotariak/azkena/blob/main/LICENSE' }],
         },
@@ -236,6 +246,34 @@ export async function handleWellKnown(request: Request): Promise<Response | null
         languages: ['fr', 'en', 'eu'],
         sourceCode: 'https://github.com/pilotariak/azkena',
       },
+    });
+  }
+
+  // ── OAuth 2.0 Authorization Server Metadata (RFC 8414) ───────────────────
+  if (pathname === '/.well-known/oauth-authorization-server') {
+    return jsonOk({
+      issuer: base,
+      authorization_endpoint: `${base}/oauth/authorize`,
+      token_endpoint: `${base}/oauth/token`,
+      service_documentation: 'https://github.com/pilotariak/azkena/blob/main/AGENTS.md',
+      op_policy_uri: 'https://github.com/pilotariak/azkena/blob/main/SECURITY.md',
+      op_tos_uri: 'https://github.com/pilotariak/azkena',
+      ui_locales_supported: ['fr', 'en', 'eu'],
+      scopes_supported: ['read:competitions', 'read:clubs', 'read:results'],
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
+      token_endpoint_auth_methods_supported: ['client_secret_basic', 'none'],
+      code_challenge_methods_supported: ['S256'],
+      protected_resources: [`${base}/mcp`],
+    });
+  }
+
+  // ── OAuth 2.0 Protected Resource Metadata (RFC 8414) ──────────────────────
+  if (pathname === '/.well-known/oauth-protected-resource') {
+    return jsonOk({
+      resource: `${base}/mcp`,
+      authorization_servers: [base],
+      bearer_methods_supported: ['header'],
     });
   }
 

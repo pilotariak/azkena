@@ -142,6 +142,8 @@ All `/.well-known/` endpoints are read-only, unauthenticated, and cacheable (`Ca
 | `/.well-known/mcp/server-card.json` | MCP Server Card 2025-10 | `application/json` |
 | `/.well-known/agent-skills/index.json` | Agent Skills schema 0.2.0 | `application/json` |
 | `/.well-known/agent-skills/<name>/SKILL.md` | Skill detail document | `text/markdown` |
+| `/.well-known/oauth-authorization-server` | OAuth 2.0 Authorization Server Metadata (RFC 8414) | `application/json` |
+| `/.well-known/oauth-protected-resource` | OAuth 2.0 Protected Resource Metadata (RFC 8414) | `application/json` |
 
 These follow the patterns established at [turva.dev](https://turva.dev/.well-known/api-catalog).
 
