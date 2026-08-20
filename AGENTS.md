@@ -156,12 +156,18 @@ Two skills are published:
 The SHA-256 digest in the skills index is computed at request time via `crypto.subtle.digest`,
 so it always reflects the actual content served.
 
+## Authentication and Security
+
+Azkena uses a Bearer token mechanism for authentication.
+
+- **Current Mechanism:** The worker checks for an `Authorization` header containing a Bearer token that must match the `MCP_API_TOKEN` environment variable. If `MCP_API_TOKEN` is not set, no authentication is required (for local development only).
+- **Robustness/Future Path:** To implement more robust authorization (e.g., OAuth 2.1), we recommend adopting the `workers-oauth-provider` library. This allows for integration with identity providers or handling the full OAuth flow within the Worker. For detailed documentation and implementation examples, see the [Cloudflare Authorization documentation](https://developers.cloudflare.com/agents/model-context-protocol/protocol/authorization/).
+
 ## Key Conventions
 
 - Transport: `StreamableHTTPServerTransport` in **stateless mode** (`sessionIdGenerator: undefined`)
   — a fresh `McpServer` is created per request, matching Cloudflare Workers' stateless model
 - All tools call **Frontis** (GraphQL gateway) via `X-Pilotariak-League` header for league routing
-- Auth is a simple Bearer token (`MCP_API_TOKEN`) — omit in dev, always set in production
 - Formatting: `dprint` (config in `dprint.json`)
 - License headers required on all source files (checked by `licenserc.toml`)
 

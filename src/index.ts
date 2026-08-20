@@ -77,8 +77,33 @@ export default {
     }
 
     if (env.MCP_API_TOKEN) {
-      const auth = request.headers.get('Authorization');
-      if (auth !== `Bearer ${env.MCP_API_TOKEN}`) {
+      const authHeader = request.headers.get('Authorization');
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        console.warn('Missing or malformed Authorization header');
+        return withHeaders(new Response('Unauthorized', { status: 401 }));
+      }
+
+      const token = authHeader.split(' ')[1];
+      
+      // Use subtle crypto for constant-time comparison to prevent timing attacks
+      const encoder = new TextEncoder();
+      const expectedToken = encoder.encode(env.MCP_API_TOKEN);
+      const actualToken = encoder.encode(token);
+
+      if (expectedToken.length !== actualToken.length) {
+        console.warn('Invalid token');
+        return withHeaders(new Response('Unauthorized', { status: 401 }));
+      }
+
+      let isEqual = true;
+      for (let i = 0; i < expectedToken.length; i++) {
+        if (expectedToken[i] !== actualToken[i]) {
+          isEqual = false;
+        }
+      }
+
+      if (!isEqual) {
+        console.warn('Invalid token');
         return withHeaders(new Response('Unauthorized', { status: 401 }));
       }
     }
