@@ -89,10 +89,12 @@ export default {
       return withHeaders(new Response('Not Found', { status: 404 }));
     }
 
-    // Fail-closed auth: outside development, refuse to serve the MCP endpoint
-    // if no token is configured (prevents an accidentally open production server).
-    const isDevelopment = env.ENVIRONMENT === 'development';
-    if (!env.MCP_API_TOKEN && !isDevelopment) {
+    // Fail-closed auth: only loopback hosts (local dev) may connect without a
+    // token. Any deployed worker must have MCP_API_TOKEN configured, otherwise
+    // it refuses to serve the MCP endpoint. Do NOT gate this on ENVIRONMENT —
+    // the default vars ship ENVIRONMENT=development, which would accidentally
+    // leave a `wrangler deploy` (without --env) wide open.
+    if (!env.MCP_API_TOKEN && !isLoopback(url.hostname)) {
       return withHeaders(new Response('Unauthorized', { status: 401 }));
     }
 

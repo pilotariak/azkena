@@ -40,12 +40,20 @@ describe('security headers', () => {
     expect(res.status).toBe(401);
   });
 
-  it('rejects requests when token is missing outside development', async () => {
+  it('rejects requests when token is missing on non-loopback hosts, regardless of ENVIRONMENT', async () => {
     const res = await worker.fetch(
       new Request('https://mcp.pilotariak.com/mcp', { method: 'POST' }),
-      { ...env, MCP_API_TOKEN: undefined },
+      { ...env, ENVIRONMENT: 'development', MCP_API_TOKEN: undefined },
     );
     expect(res.status).toBe(401);
+  });
+
+  it('allows unauthenticated requests from loopback hosts (local dev)', async () => {
+    const res = await worker.fetch(
+      new Request('http://localhost:8787/mcp', { method: 'POST' }),
+      { ...env, ENVIRONMENT: 'development', MCP_API_TOKEN: undefined },
+    );
+    expect(res.status).not.toBe(401);
   });
 
   it('serves landing page with CSP when CSP is allowed', async () => {
