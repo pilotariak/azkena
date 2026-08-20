@@ -31,6 +31,12 @@ const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, Mcp-Session-Id',
 };
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+function isLoopback(hostname: string): boolean {
+  return LOOPBACK_HOSTS.has(hostname);
+}
+
 function withHeaders(response: Response): Response {
   const headers = new Headers(response.headers);
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) headers.set(k, v);
@@ -46,14 +52,21 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
+    // Force HTTPS: reject plain HTTP with a permanent redirect (308 preserves
+    // method and body for MCP POST requests). Loopback hosts (local dev) exempt.
+    if (url.protocol === 'http:' && !isLoopback(url.hostname)) {
+      url.protocol = 'https:';
+      return withHeaders(Response.redirect(url.toString(), 308));
+    }
+
     // OPTIONS preflight — respond immediately for all endpoints.
     if (request.method === 'OPTIONS') {
       return withHeaders(new Response(null, { status: 204 }));
     }
 
     if (url.pathname === '/') {
-      // Landing page has its own Content-Security-Policy (allows fonts + inline script).
-      // Apply only non-CSP security headers so the page renders correctly.
+      // Landing page sets its own Content-Security-Policy (allows fonts + inline
+      // script/style). Apply the remaining security headers so it renders correctly.
       const landing = handleLanding(request);
       const headers = new Headers(landing.headers);
       for (const [k, v] of Object.entries(SECURITY_HEADERS)) {
@@ -74,6 +87,13 @@ export default {
 
     if (url.pathname !== '/mcp') {
       return withHeaders(new Response('Not Found', { status: 404 }));
+    }
+
+    // Fail-closed auth: outside development, refuse to serve the MCP endpoint
+    // if no token is configured (prevents an accidentally open production server).
+    const isDevelopment = env.ENVIRONMENT === 'development';
+    if (!env.MCP_API_TOKEN && !isDevelopment) {
+      return withHeaders(new Response('Unauthorized', { status: 401 }));
     }
 
     if (env.MCP_API_TOKEN) {
