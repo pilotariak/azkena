@@ -108,10 +108,12 @@ async function withResultType(response: Response,): Promise<Response> {
     let payload: unknown;
     try {
       payload = await response.json();
+      console.log(`[withResultType] RAW JSON Payload: ${JSON.stringify(payload)}`);
     } catch (e) {
       return response;
     }
-    injectResultType(payload,);
+    const injected = injectResultType(payload,);
+    console.log(`[withResultType] Injected resultType: ${injected}`);
     return new Response(JSON.stringify(payload,), {
       status: response.status,
       statusText: response.statusText,
@@ -128,7 +130,9 @@ async function withResultType(response: Response,): Promise<Response> {
     const text = await response.text();
     const json = sseToJson(text,);
     if (json) {
-      injectResultType(json,);
+      console.log(`[withResultType] RAW SSE Payload: ${JSON.stringify(json)}`);
+      const injected = injectResultType(json,);
+      console.log(`[withResultType] SSE Injected resultType: ${injected}`);
       const headers = new Headers(response.headers,);
       headers.set('Content-Type', 'application/json; charset=utf-8',);
       return new Response(JSON.stringify(json,), {
