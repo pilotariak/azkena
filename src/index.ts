@@ -122,6 +122,24 @@ export default {
             };
             return withHeaders(Response.json(discoverResponse,),);
           }
+
+          // MCP 2026-07-28 retires the initialize/initialized handshake (SEP-2575,
+          // SEP-2567). Reject it so scanners/clients do not classify azkena as a
+          // 2025-era server from the SDK's legacy protocolVersion, and so the
+          // stateless core (server/discover + per-request self-describing calls)
+          // is the only path. Capability pre-fetch happens via server/discover.
+          if (body.method === 'initialize' || body.method === 'initialized') {
+            const rejectResponse = {
+              jsonrpc: '2.0',
+              id: body.id,
+              error: {
+                code: -32601,
+                message: 'Method not found: initialize/initialized are retired in MCP 2026-07-28. '
+                  + 'Use server/discover for capability pre-fetch.',
+              },
+            };
+            return withHeaders(Response.json(rejectResponse,),);
+          }
         } catch {
           // If JSON parsing fails, continue with normal (authenticated) MCP handling
         }

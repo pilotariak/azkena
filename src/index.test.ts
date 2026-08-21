@@ -117,6 +117,25 @@ describe('security headers', () => {
     expect(payload.result._meta.protocolVersion,).toBe('2026-07-28',);
   });
 
+  it('rejects the retired initialize handshake with 2026-07-28 guidance', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2025-03-26', capabilities: {}, },
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(200,);
+    const payload = (await res.json()) as { error: { code: number; }; };
+    expect(payload.error.code,).toBe(-32601,);
+  });
+
   it('allows Mcp-Method and Mcp-Name headers via CORS', async () => {
     const res = await worker.fetch(
       new Request('https://mcp.pilotariak.com/mcp', { method: 'OPTIONS', },),
