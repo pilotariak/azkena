@@ -82,7 +82,7 @@ describe('security headers', () => {
     expect(res.headers.get('MCP-Protocol-Version',),).toBe('2026-07-28',);
   });
 
-  it('answers server/discover with 2026-07-28 protocol version', async () => {
+  it('answers server/discover with the 2026-07-28 shape', async () => {
     const res = await worker.fetch(
       new Request('https://mcp.pilotariak.com/mcp', {
         method: 'POST',
@@ -95,8 +95,22 @@ describe('security headers', () => {
       },),
       env,
     );
-    const payload = (await res.json()) as { result: { _meta: { protocolVersion: string; }; }; };
-    expect(payload.result._meta.protocolVersion,).toBe('2026-07-28',);
+    const payload = (await res.json()) as {
+      result: {
+        resultType: string;
+        supportedVersions: string[];
+        capabilities: { tools: Record<string, unknown>; };
+        _meta: { 'io.modelcontextprotocol/serverInfo': { name: string; version: string; }; };
+        ttlMs: number;
+        cacheScope: string;
+      };
+    };
+    expect(payload.result.resultType,).toBe('complete',);
+    expect(payload.result.supportedVersions,).toEqual(['2026-07-28',],);
+    expect(payload.result.capabilities.tools,).toBeDefined();
+    expect(payload.result._meta['io.modelcontextprotocol/serverInfo'].name,).toBe('azkena',);
+    expect(payload.result.ttlMs,).toBe(3600000,);
+    expect(payload.result.cacheScope,).toBe('public',);
   });
 
   it('serves server/discover without auth (public capability pre-fetch)', async () => {
@@ -113,8 +127,8 @@ describe('security headers', () => {
       env,
     );
     expect(res.status,).toBe(200,);
-    const payload = (await res.json()) as { result: { _meta: { protocolVersion: string; }; }; };
-    expect(payload.result._meta.protocolVersion,).toBe('2026-07-28',);
+    const payload = (await res.json()) as { result: { supportedVersions: string[]; }; };
+    expect(payload.result.supportedVersions,).toEqual(['2026-07-28',],);
   });
 
   it('rejects the retired initialize handshake with 2026-07-28 guidance', async () => {

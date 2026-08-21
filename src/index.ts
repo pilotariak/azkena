@@ -108,16 +108,23 @@ export default {
               jsonrpc: '2.0',
               id: body.id,
               result: {
-                name: 'azkena',
-                version: VERSION,
+                resultType: 'complete',
+                supportedVersions: ['2026-07-28',],
                 capabilities: {
                   tools: {},
-                  prompts: {},
-                  resources: {},
                 },
                 _meta: {
-                  protocolVersion: '2026-07-28',
+                  'io.modelcontextprotocol/serverInfo': {
+                    name: 'azkena',
+                    version: VERSION,
+                  },
                 },
+                instructions:
+                  'Azkena exposes Basque pelota competition data for the Pilotariak platform '
+                  + 'via read-only tools (competitions, clubs, categories, specialties, results). '
+                  + 'Always pass a league parameter: lcapb, lidfpb, ccapb, or ctpb.',
+                ttlMs: 3600000,
+                cacheScope: 'public',
               },
             };
             return withHeaders(Response.json(discoverResponse,),);
