@@ -3,9 +3,27 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, expect, it, } from 'vitest';
+import { describe, expect, it, vi, } from 'vitest';
 import worker from './index.js';
 import type { Env, } from './types.js';
+
+// The OAuth provider package imports `cloudflare:workers`, which only exists in
+// the Workers runtime. Stub it so the Node/vitest module graph loads cleanly.
+// Tests never exercise the real OAuth endpoints (they use MCP_API_TOKEN), so the
+// stub only needs to satisfy the import shape.
+vi.mock('@cloudflare/workers-oauth-provider', () => {
+  return {
+    OAuthProvider: class {
+      constructor(_opts: unknown) {}
+      async fetch() {
+        return new Response('OAuth endpoint', { status: 200 });
+      }
+    },
+    getOAuthApi: () => ({
+      unwrapToken: async () => null,
+    }),
+  };
+});
 
 const env: Env = {
   FRONTIS_URL: 'https://frontis-gateway.pilotariak.com/graphql',
