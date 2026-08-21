@@ -13,15 +13,26 @@ Built as a Cloudflare Worker using `@modelcontextprotocol/sdk`.
 
 ## MCP Tools
 
-| Tool | Description |
-|---|---|
-| `list_competitions` | All competitions for a league |
-| `list_clubs` | All clubs in a league |
-| `list_categories` | Player categories (divisions/series) |
-| `list_specialties` | Basque pelota disciplines (trinquet, chistera, …) |
-| `list_results` | Match results with filters (competition, specialty, category, phase) |
+| Tool                | Description                                                          |
+| ------------------- | -------------------------------------------------------------------- |
+| `list_competitions` | All competitions for a league                                        |
+| `list_clubs`        | All clubs in a league                                                |
+| `list_categories`   | Player categories (divisions/series)                                 |
+| `list_specialties`  | Basque pelota disciplines (trinquet, chistera, …)                    |
+| `list_results`      | Match results with filters (competition, specialty, category, phase) |
 
 All tools accept a `league` parameter: `lcapb` · `lidfpb` · `ccapb` · `ctpb`
+
+## Protocol
+
+Azkena speaks the [MCP 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28)
+stateless core:
+
+- No `initialize`/`initialized` handshake — every request is self-describing
+- `server/discover` for capability pre-fetching
+- `MCP-Protocol-Version: 2026-07-28` response header
+- `Mcp-Method` / `Mcp-Name` header-based routing (SEP-2243)
+- `ttlMs` / `cacheScope` cache hints on list-type tool responses (SEP-2549)
 
 ## Quick Start
 

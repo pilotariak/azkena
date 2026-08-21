@@ -27,13 +27,13 @@ azkena/
 
 ## MCP Tools
 
-| Tool | Description | Key parameters |
-|---|---|---|
-| `list_competitions` | All competitions for a league | `league` |
-| `list_clubs` | All clubs in a league | `league` |
-| `list_categories` | Player categories (divisions/series) | `league` |
-| `list_specialties` | Basque pelota disciplines | `league` |
-| `list_results` | Match results with optional filters | `league`, `competitionId?`, `specialtyId?`, `categoryId?`, `phase?` |
+| Tool                | Description                          | Key parameters                                                      |
+| ------------------- | ------------------------------------ | ------------------------------------------------------------------- |
+| `list_competitions` | All competitions for a league        | `league`                                                            |
+| `list_clubs`        | All clubs in a league                | `league`                                                            |
+| `list_categories`   | Player categories (divisions/series) | `league`                                                            |
+| `list_specialties`  | Basque pelota disciplines            | `league`                                                            |
+| `list_results`      | Match results with optional filters  | `league`, `competitionId?`, `specialtyId?`, `categoryId?`, `phase?` |
 
 League codes: `lcapb` · `lidfpb` · `ccapb` · `ctpb`
 
@@ -72,11 +72,18 @@ Test with curl:
 # Health check
 curl http://localhost:8787/
 
-# MCP initialize
+# MCP server/discover (capability pre-fetch, MCP 2026-07-28)
 curl -X POST http://localhost:8787/mcp \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"server/discover"}'
+
+# MCP tools/list (stateless core — no initialize handshake)
+curl -X POST http://localhost:8787/mcp \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/list" \
+  -H "Authorization: Bearer <token>" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 ```
 
 ## Connecting to Claude Desktop
@@ -107,11 +114,11 @@ make test            # vitest
 
 ## Environments
 
-| Env | Worker name | URL | Notes |
-|---|---|---|---|
-| `development` (default) | `azkena` (local) | `http://localhost:8787` | `wrangler dev`, no auth required |
-| `staging` | `azkena-staging` | `https://azkena-staging.pilotariak.workers.dev` | `wrangler deploy --env staging` |
-| `production` | `azkena` | `https://mcp.pilotariak.com` | `wrangler deploy --env production` |
+| Env                     | Worker name      | URL                                             | Notes                              |
+| ----------------------- | ---------------- | ----------------------------------------------- | ---------------------------------- |
+| `development` (default) | `azkena` (local) | `http://localhost:8787`                         | `wrangler dev`, no auth required   |
+| `staging`               | `azkena-staging` | `https://azkena-staging.pilotariak.workers.dev` | `wrangler deploy --env staging`    |
+| `production`            | `azkena`         | `https://mcp.pilotariak.com`                    | `wrangler deploy --env production` |
 
 Key vars (set per env in `wrangler.jsonc`):
 
@@ -135,15 +142,15 @@ make logs            # tail live worker logs
 
 All `/.well-known/` endpoints are read-only, unauthenticated, and cacheable (`Cache-Control: public, max-age=3600`).
 
-| Path | Standard | Content-Type |
-|---|---|---|
-| `/.well-known/api-catalog` | IETF draft-ietf-httpapi-api-catalog | `application/linkset+json` |
-| `/.well-known/ai-catalog.json` | AI Catalog ARD v1.0 | `application/json` |
-| `/.well-known/mcp/server-card.json` | MCP Server Card 2025-10 | `application/json` |
-| `/.well-known/agent-skills/index.json` | Agent Skills schema 0.2.0 | `application/json` |
-| `/.well-known/agent-skills/<name>/SKILL.md` | Skill detail document | `text/markdown` |
-| `/.well-known/oauth-authorization-server` | OAuth 2.0 Authorization Server Metadata (RFC 8414) | `application/json` |
-| `/.well-known/oauth-protected-resource` | OAuth 2.0 Protected Resource Metadata (RFC 8414) | `application/json` |
+| Path                                        | Standard                                           | Content-Type               |
+| ------------------------------------------- | -------------------------------------------------- | -------------------------- |
+| `/.well-known/api-catalog`                  | IETF draft-ietf-httpapi-api-catalog                | `application/linkset+json` |
+| `/.well-known/ai-catalog.json`              | AI Catalog ARD v1.0                                | `application/json`         |
+| `/.well-known/mcp/server-card.json`         | MCP Server Card 2025-10                            | `application/json`         |
+| `/.well-known/agent-skills/index.json`      | Agent Skills schema 0.2.0                          | `application/json`         |
+| `/.well-known/agent-skills/<name>/SKILL.md` | Skill detail document                              | `text/markdown`            |
+| `/.well-known/oauth-authorization-server`   | OAuth 2.0 Authorization Server Metadata (RFC 8414) | `application/json`         |
+| `/.well-known/oauth-protected-resource`     | OAuth 2.0 Protected Resource Metadata (RFC 8414)   | `application/json`         |
 
 These follow the patterns established at [turva.dev](https://turva.dev/.well-known/api-catalog).
 
@@ -169,8 +176,14 @@ Azkena uses a Bearer token mechanism for authentication.
 
 ## Key Conventions
 
-- Transport: `StreamableHTTPServerTransport` in **stateless mode** (`sessionIdGenerator: undefined`)
+- Transport: `WebStandardStreamableHTTPServerTransport` in **stateless mode** (`sessionIdGenerator: undefined`)
   — a fresh `McpServer` is created per request, matching Cloudflare Workers' stateless model
+- Protocol: MCP **2026-07-28** stateless core — the `initialize`/`initialized` handshake and
+  `Mcp-Session-Id` header are retired. Each request is self-describing; `server/discover` may be
+  used for capability pre-fetching. Every response carries `MCP-Protocol-Version: 2026-07-28`.
+- Streamable HTTP requests accept/echo `Mcp-Method` / `Mcp-Name` headers (SEP-2243) so gateways
+  and WAFs can route and meter on headers.
+- List-type tool responses carry `ttlMs` / `cacheScope` cache hints (SEP-2549).
 - All tools call **Frontis** (GraphQL gateway) via `X-Pilotariak-League` header for league routing
 - Formatting: `dprint` (config in `dprint.json`)
 - License headers required on all source files (checked by `licenserc.toml`)

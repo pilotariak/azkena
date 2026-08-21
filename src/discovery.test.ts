@@ -28,6 +28,7 @@ describe('RFC 8414 OAuth discovery endpoints', () => {
       grant_types_supported: string[];
       token_endpoint_auth_methods_supported: string[];
       code_challenge_methods_supported: string[];
+      authorization_response_iss_parameter_supported: boolean;
       protected_resources: string[];
     };
     expect(body.issuer).toBe(host);
@@ -46,6 +47,7 @@ describe('RFC 8414 OAuth discovery endpoints', () => {
     expect(body.grant_types_supported).toEqual(['authorization_code', 'refresh_token']);
     expect(body.token_endpoint_auth_methods_supported).toEqual(['client_secret_basic', 'none']);
     expect(body.code_challenge_methods_supported).toEqual(['S256']);
+    expect(body.authorization_response_iss_parameter_supported).toBe(true);
     expect(body.protected_resources).toEqual([`${host}/mcp`]);
   });
 

@@ -3,23 +3,26 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { listCategories } from '../frontis/client.js';
-import type { Env } from '../types.js';
-import { LEAGUE, READ_ONLY, toolError } from './common.js';
+import type { McpServer, } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { listCategories, } from '../frontis/client.js';
+import type { Env, } from '../types.js';
+import { LEAGUE, READ_ONLY, toolError, } from './common.js';
 
-export function registerCategoriesTools(server: McpServer, env: Env): void {
+export function registerCategoriesTools(server: McpServer, env: Env,): void {
   server.tool(
     'list_categories',
     'List player categories (divisions/series) for a Basque pelota league. Use the returned IDs when filtering results.',
-    { league: LEAGUE },
+    { league: LEAGUE, },
     READ_ONLY,
-    async ({ league }) => {
+    async ({ league, },) => {
       try {
-        const categories = await listCategories(env.FRONTIS_URL, league);
-        return { content: [{ type: 'text', text: JSON.stringify(categories, null, 2) }] };
+        const categories = await listCategories(env.FRONTIS_URL, league,);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(categories, null, 2,), },],
+          _meta: { ttlMs: 3600000, cacheScope: 'public', },
+        };
       } catch (err) {
-        return toolError(err);
+        return toolError(err,);
       }
     },
   );

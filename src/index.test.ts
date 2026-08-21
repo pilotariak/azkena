@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, } from 'vitest';
 import worker from './index.js';
-import type { Env } from './types.js';
+import type { Env, } from './types.js';
 
 const env: Env = {
   FRONTIS_URL: 'https://frontis-gateway.pilotariak.com/graphql',
@@ -17,51 +17,293 @@ const env: Env = {
 describe('security headers', () => {
   it('redirects plain HTTP to HTTPS with 308', async () => {
     const res = await worker.fetch(
-      new Request('http://mcp.pilotariak.com/mcp', { method: 'POST' }),
+      new Request('http://mcp.pilotariak.com/mcp', { method: 'POST', },),
       env,
     );
-    expect(res.status).toBe(308);
-    expect(res.headers.get('location')).toBe('https://mcp.pilotariak.com/mcp');
+    expect(res.status,).toBe(308,);
+    expect(res.headers.get('location',),).toBe('https://mcp.pilotariak.com/mcp',);
   });
 
   it('does not redirect loopback hosts (local dev)', async () => {
     const res = await worker.fetch(
-      new Request('http://localhost:8787/mcp', { method: 'POST' }),
+      new Request('http://localhost:8787/mcp', { method: 'POST', },),
       env,
     );
-    expect(res.status).toBe(401);
+    expect(res.status,).toBe(401,);
   });
 
   it('rejects unauthenticated requests when token is configured', async () => {
     const res = await worker.fetch(
-      new Request('https://mcp.pilotariak.com/mcp', { method: 'POST' }),
+      new Request('https://mcp.pilotariak.com/mcp', { method: 'POST', },),
       env,
     );
-    expect(res.status).toBe(401);
+    expect(res.status,).toBe(401,);
   });
 
   it('rejects requests when token is missing on non-loopback hosts, regardless of ENVIRONMENT', async () => {
     const res = await worker.fetch(
-      new Request('https://mcp.pilotariak.com/mcp', { method: 'POST' }),
-      { ...env, ENVIRONMENT: 'development', MCP_API_TOKEN: undefined },
+      new Request('https://mcp.pilotariak.com/mcp', { method: 'POST', },),
+      { ...env, ENVIRONMENT: 'development', MCP_API_TOKEN: undefined, },
     );
-    expect(res.status).toBe(401);
+    expect(res.status,).toBe(401,);
   });
 
   it('allows unauthenticated requests from loopback hosts (local dev)', async () => {
     const res = await worker.fetch(
-      new Request('http://localhost:8787/mcp', { method: 'POST' }),
-      { ...env, ENVIRONMENT: 'development', MCP_API_TOKEN: undefined },
+      new Request('http://localhost:8787/mcp', { method: 'POST', },),
+      { ...env, ENVIRONMENT: 'development', MCP_API_TOKEN: undefined, },
     );
-    expect(res.status).not.toBe(401);
+    expect(res.status,).not.toBe(401,);
   });
 
   it('serves landing page with CSP when CSP is allowed', async () => {
     const res = await worker.fetch(
-      new Request('https://mcp.pilotariak.com/'),
-      { ...env, MCP_API_TOKEN: undefined },
+      new Request('https://mcp.pilotariak.com/',),
+      { ...env, MCP_API_TOKEN: undefined, },
     );
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-security-policy')).toContain("default-src 'none'");
+    expect(res.status,).toBe(200,);
+    expect(res.headers.get('content-security-policy',),).toContain('default-src \'none\'',);
+  });
+
+  it('emits MCP-Protocol-Version header on MCP responses', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer secret-token', },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'server/discover',
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(200,);
+    expect(res.headers.get('MCP-Protocol-Version',),).toBe('2026-07-28',);
+  });
+
+  it('answers server/discover with the 2026-07-28 shape', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer secret-token', },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'server/discover',
+        },),
+      },),
+      env,
+    );
+    const payload = (await res.json()) as {
+      result: {
+        resultType: string;
+        supportedVersions: string[];
+        capabilities: { tools: Record<string, unknown>; };
+        _meta: { 'io.modelcontextprotocol/serverInfo': { name: string; version: string; }; };
+        ttlMs: number;
+        cacheScope: string;
+      };
+    };
+    expect(payload.result.resultType,).toBe('complete',);
+    expect(payload.result.supportedVersions,).toEqual(['2026-07-28',],);
+    expect(payload.result.capabilities.tools,).toBeDefined();
+    expect(payload.result._meta['io.modelcontextprotocol/serverInfo'].name,).toBe('azkena',);
+    expect(payload.result.ttlMs,).toBe(3600000,);
+    expect(payload.result.cacheScope,).toBe('public',);
+  });
+
+  it('serves server/discover without auth (public capability pre-fetch)', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'server/discover',
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(200,);
+    const payload = (await res.json()) as { result: { supportedVersions: string[]; }; };
+    expect(payload.result.supportedVersions,).toEqual(['2026-07-28',],);
+  });
+
+  it('rejects the retired initialize handshake with 2026-07-28 guidance', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2025-03-26', capabilities: {}, },
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(200,);
+    const payload = (await res.json()) as { error: { code: number; }; };
+    expect(payload.error.code,).toBe(-32601,);
+  });
+
+  it('adds resultType to tools/list results (2026-07-28)', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer secret-token',
+          'MCP-Protocol-Version': '2026-07-28',
+          'Mcp-Method': 'tools/list',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/list',
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientCapabilities': {},
+          },
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(200,);
+    expect(res.headers.get('content-type',),).toContain('application/json',);
+    const payload = (await res.json()) as { result: { resultType: string; tools: unknown[]; }; };
+    expect(payload.result.resultType,).toBe('complete',);
+    expect(Array.isArray(payload.result.tools,),).toBe(true,);
+  });
+
+  it('returns a JSON result with resultType for tools/list (SSE from SDK is converted)', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer secret-token',
+          'MCP-Protocol-Version': '2026-07-28',
+          'Mcp-Method': 'tools/list',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/list',
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientCapabilities': {},
+          },
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(200,);
+    const text = await res.text();
+    expect(text.includes('resultType',),).toBe(true,);
+    const payload = JSON.parse(text,) as { result: { resultType: string; tools: unknown[]; }; };
+    expect(payload.result.resultType,).toBe('complete',);
+    expect(Array.isArray(payload.result.tools,),).toBe(true,);
+  });
+
+  it('rejects a Mcp-Method header that does not match the body method (2026-07-28)', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer secret-token',
+          'MCP-Protocol-Version': '2026-07-28',
+          'Mcp-Method': 'resources/list',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/list',
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientCapabilities': {},
+          },
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(400,);
+    const payload = (await res.json()) as { error: { code: number; }; };
+    expect(payload.error.code,).toBe(-32020,);
+  });
+
+  it('rejects a MCP-Protocol-Version header that does not match body _meta', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer secret-token',
+          'MCP-Protocol-Version': '2025-11-25',
+          'Mcp-Method': 'tools/list',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/list',
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientCapabilities': {},
+          },
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(400,);
+    const payload = (await res.json()) as { error: { code: number; }; };
+    expect(payload.error.code,).toBe(-32020,);
+  });
+
+  it('rejects a Mcp-Name header that does not match the tools/call body name', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer secret-token',
+          'MCP-Protocol-Version': '2026-07-28',
+          'Mcp-Method': 'tools/call',
+          'Mcp-Name': 'other_tool',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'list_competitions', arguments: { league: 'lcapb', }, },
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientCapabilities': {},
+          },
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(400,);
+    const payload = (await res.json()) as { error: { code: number; }; };
+    expect(payload.error.code,).toBe(-32020,);
+  });
+
+  it('allows Mcp-Method and Mcp-Name headers via CORS', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', { method: 'OPTIONS', },),
+      env,
+    );
+    expect(res.headers.get('access-control-allow-headers',),).toContain('Mcp-Method',);
+    expect(res.headers.get('access-control-allow-headers',),).toContain('Mcp-Name',);
+    expect(res.headers.get('access-control-allow-headers',),).not.toContain('Mcp-Session-Id',);
   });
 });
