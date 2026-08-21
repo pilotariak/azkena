@@ -108,7 +108,7 @@ async function withResultType(response: Response,): Promise<Response> {
     let payload: unknown;
     try {
       payload = await response.json();
-    } catch {
+    } catch (e) {
       return response;
     }
     injectResultType(payload,);
