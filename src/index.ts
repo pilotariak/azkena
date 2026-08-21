@@ -94,6 +94,40 @@ export default {
       return withHeaders(new Response('Not Found', { status: 404, },),);
     }
 
+    // server/discover (MCP 2026-07-28) is a public capability pre-fetch endpoint,
+    // analogous to the unauthenticated /.well-known/ discovery documents. It only
+    // returns server metadata (name, version, capabilities, protocol version), so
+    // it is served WITHOUT auth. Real tool calls below remain fail-closed.
+    if (request.method === 'POST') {
+      const contentType = request.headers.get('Content-Type',);
+      if (contentType?.includes('application/json',)) {
+        try {
+          const body = (await request.json()) as { method?: string; id?: string | number; };
+          if (body.method === 'server/discover') {
+            const discoverResponse = {
+              jsonrpc: '2.0',
+              id: body.id,
+              result: {
+                name: 'azkena',
+                version: VERSION,
+                capabilities: {
+                  tools: {},
+                  prompts: {},
+                  resources: {},
+                },
+                _meta: {
+                  protocolVersion: '2026-07-28',
+                },
+              },
+            };
+            return withHeaders(Response.json(discoverResponse,),);
+          }
+        } catch {
+          // If JSON parsing fails, continue with normal (authenticated) MCP handling
+        }
+      }
+    }
+
     // Fail-closed auth: only loopback hosts (local dev) may connect without a
     // token. Any deployed worker must have MCP_API_TOKEN configured, otherwise
     // it refuses to serve the MCP endpoint. Do NOT gate this on ENVIRONMENT —
@@ -132,37 +166,6 @@ export default {
       if (!isEqual) {
         console.warn('Invalid token',);
         return withHeaders(new Response('Unauthorized', { status: 401, },),);
-      }
-    }
-
-    // Handle server/discover RPC for MCP specification 2026-07-28
-    if (request.method === 'POST' && url.pathname === '/mcp') {
-      const contentType = request.headers.get('Content-Type',);
-      if (contentType?.includes('application/json',)) {
-        try {
-          const body = (await request.json()) as { method?: string; id?: string | number; };
-          if (body.method === 'server/discover') {
-            const discoverResponse = {
-              jsonrpc: '2.0',
-              id: body.id,
-              result: {
-                name: 'azkena',
-                version: VERSION,
-                capabilities: {
-                  tools: {},
-                  prompts: {},
-                  resources: {},
-                },
-                _meta: {
-                  protocolVersion: '2026-07-28',
-                },
-              },
-            };
-            return withHeaders(Response.json(discoverResponse,),);
-          }
-        } catch {
-          // If JSON parsing fails, continue with normal MCP handling
-        }
       }
     }
 

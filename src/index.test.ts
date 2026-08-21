@@ -99,6 +99,24 @@ describe('security headers', () => {
     expect(payload.result._meta.protocolVersion,).toBe('2026-07-28',);
   });
 
+  it('serves server/discover without auth (public capability pre-fetch)', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'server/discover',
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(200,);
+    const payload = (await res.json()) as { result: { _meta: { protocolVersion: string; }; }; };
+    expect(payload.result._meta.protocolVersion,).toBe('2026-07-28',);
+  });
+
   it('allows Mcp-Method and Mcp-Name headers via CORS', async () => {
     const res = await worker.fetch(
       new Request('https://mcp.pilotariak.com/mcp', { method: 'OPTIONS', },),
