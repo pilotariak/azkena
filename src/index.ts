@@ -249,6 +249,13 @@ function buildOAuthOptions(url: URL,) {
     defaultHandler: {
       fetch: async () => new Response('Not Found', { status: 404, },),
     },
+    // The provider requires a protected route + handler to be configured. `/mcp`
+    // is the resource it authorizes; the handler re-enters the worker so MCP
+    // requests are served normally once a valid token is present.
+    apiRoute: '/mcp',
+    apiHandler: {
+      fetch: (request: Request, env: Env,) => workerFetch(request, env,),
+    },
     // Allow clients registered via a Client ID Metadata Document (CIMD), which
     // are always public (`token_endpoint_auth_method: none`).
     clientIdMetadataDocumentEnabled: true,
@@ -275,8 +282,22 @@ function stripMeta<T,>(value: T,): T {
 // Worker entry point
 // ---------------------------------------------------------------------------
 
+// The OAuth provider is constructed per-request for `/oauth/*` paths. It needs a
+// protected API route + handler to satisfy its configuration; `/mcp` never reaches
+// the provider in this routing (the worker handles it directly after the provider
+// returns for non-oauth paths), but `apiHandler` re-enters `workerFetch` so the
+// provider can also gate `/mcp` if a request is ever routed through it.
 export default {
-  async fetch(request: Request, env: Env, ctx?: ExecutionContext,): Promise<Response> {
+    async fetch(request: Request, env: Env, ctx?: ExecutionContext,): Promise<Response> {
+        if (request.url.includes('/oauth/')) {
+            const provider = new OAuthProvider(buildOAuthOptions(new URL(request.url,),),);
+            return provider.fetch(request, env, ctx as ExecutionContext,);
+        }
+        return workerFetch(request, env,);
+    },
+};
+
+async function workerFetch(request: Request, env: Env,): Promise<Response> {
     const url = new URL(request.url,);
 
     // Force HTTPS: reject plain HTTP with a permanent redirect (308 preserves
@@ -305,11 +326,6 @@ export default {
 
     if (url.pathname === '/version') {
       return withHeaders(Response.json({ version: VERSION, },),);
-    }
-
-    if (url.pathname.startsWith('/oauth/',)) {
-      const provider = new OAuthProvider(buildOAuthOptions(url,),);
-      return provider.fetch(request, env, ctx as ExecutionContext,);
     }
 
     if (url.pathname.startsWith('/.well-known/',)) {
@@ -508,5 +524,4 @@ export default {
       headers: outHeaders,
     },);
     return withHeaders(out,);
-  },
-};
+}
