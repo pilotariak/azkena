@@ -38,6 +38,11 @@ function isLoopback(hostname: string,): boolean {
   return LOOPBACK_HOSTS.has(hostname,);
 }
 
+// The published SDK (v1.x) only supports 2025-era protocol versions. We validate
+// the real 2026-07-28 header ourselves, then present the SDK with this supported
+// version so it dispatches the tool instead of rejecting the request.
+const SUPPORTED_SDK_VERSION = '2025-11-25';
+
 function withHeaders(response: Response,): Response {
   const headers = new Headers(response.headers,);
   for (const [k, v,] of Object.entries(SECURITY_HEADERS,)) { headers.set(k, v,); }
@@ -69,28 +74,31 @@ function injectResultType(payload: unknown,): boolean {
   return false;
 }
 
-// Parse an SSE body, inject resultType into every JSON-RPC data frame, and
-// rebuild the framing. Returns the original text if parsing fails.
-function rewriteSse(text: string,): string {
-  const frames = text.split('\n\n',);
-  const out = frames.map((frame,) => {
-    if (!frame.trim()) { return frame; }
-    let event = 'message';
+// Extract the final JSON-RPC message (the one carrying `result` or `error`)
+// from an SSE body. Returns null if no parseable frame is found.
+function sseToJson(sseText: string,): Record<string, unknown> | null {
+  const frames = sseText.split('\n\n',);
+  let last: Record<string, unknown> | null = null;
+  for (const frame of frames) {
+    if (!frame.trim()) { continue; }
     const dataLines: string[] = [];
     for (const line of frame.split('\n',)) {
-      if (line.startsWith('event:',)) { event = line.slice(6,).trim(); }
-      else if (line.startsWith('data:',)) { dataLines.push(line.slice(5,).trim(),); }
+      if (line.startsWith('data:',)) { dataLines.push(line.slice(5,).trim(),); }
     }
-    if (dataLines.length === 0) { return frame; }
+    if (dataLines.length === 0) { continue; }
     try {
-      const payload = JSON.parse(dataLines.join('\n',),);
-      injectResultType(payload,);
-      return `event: ${event}\ndata: ${JSON.stringify(payload,)}\n`;
+      const payload = JSON.parse(dataLines.join('\n',),) as Record<string, unknown>;
+      if (
+        payload && typeof payload === 'object'
+        && ('result' in payload || 'error' in payload)
+      ) {
+        last = payload;
+      }
     } catch {
-      return frame;
+      // ignore malformed frame
     }
-  },);
-  return out.join('\n\n',);
+  }
+  return last;
 }
 
 async function withResultType(response: Response,): Promise<Response> {
@@ -111,9 +119,25 @@ async function withResultType(response: Response,): Promise<Response> {
     },);
   }
 
+  // The published SDK (v1.x) only emits text/event-stream for Streamable HTTP
+  // responses, but a 2026-07-28 server is free to respond with application/json
+  // when the client accepts both (which it must). Convert the SSE stream to a
+  // single JSON object so all clients — including those that only parse JSON —
+  // receive a well-formed result.
   if (contentType.includes('text/event-stream',)) {
     const text = await response.text();
-    return new Response(rewriteSse(text,), {
+    const json = sseToJson(text,);
+    if (json) {
+      injectResultType(json,);
+      const headers = new Headers(response.headers,);
+      headers.set('Content-Type', 'application/json; charset=utf-8',);
+      return new Response(JSON.stringify(json,), {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      },);
+    }
+    return new Response(text, {
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
@@ -121,6 +145,106 @@ async function withResultType(response: Response,): Promise<Response> {
   }
 
   return response;
+}
+
+// MCP 2026-07-28 (Streamable HTTP §Server Validation): values mirrored into HTTP
+// headers MUST match the corresponding values in the request body. Servers MUST
+// reject any mismatch with HTTP 400 + JSON-RPC error -32020 (HeaderMismatch), so
+// a gateway routing on the header cannot be tricked into executing a different
+// method than the one it authorized.
+interface RpcBody {
+  jsonrpc?: string;
+  id?: string | number | null;
+  method?: string;
+  params?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
+}
+
+// Mcp-Name and Mcp-Param-* values may be Base64-encoded using the sentinel
+// format =?base64?VALUE?= when they cannot be safely represented as ASCII.
+// Servers MUST decode before comparing to the body value.
+function decodeSentinel(value: string,): string {
+  const match = /^\s*=\?base64\?([A-Za-z0-9+/=]+)\?=\s*$/.exec(value,);
+  if (!match) { return value; }
+  try {
+    const binary = atob(match[1],);
+    const bytes = new Uint8Array(binary.length,);
+    for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i,); }
+    return new TextDecoder().decode(bytes,);
+  } catch {
+    return value;
+  }
+}
+
+function headerMismatchError(id: unknown, message: string,): Response {
+  const payload = { jsonrpc: '2.0', id: id ?? null, error: { code: -32020, message, }, };
+  return new Response(JSON.stringify(payload,), {
+    status: 400,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'mcp-protocol-version': '2026-07-28',
+      'access-control-allow-origin': '*',
+    },
+  },);
+}
+
+const NAME_METHODS = new Set(['tools/call', 'resources/read', 'prompts/get',],);
+
+function validateMcpHeaders(request: Request, body: RpcBody,): Response | null {
+  const protoHeader = request.headers.get('mcp-protocol-version',);
+  const protoBody = body._meta?.['io.modelcontextprotocol/protocolVersion'];
+  if (!protoHeader || protoHeader !== protoBody) {
+    return headerMismatchError(
+      body.id,
+      `Header mismatch: MCP-Protocol-Version header '${
+        protoHeader ?? ''
+      }' does not match body _meta protocolVersion '${String(protoBody ?? '',)}'`,
+    );
+  }
+
+  const methodHeader = request.headers.get('mcp-method',);
+  if (!methodHeader || methodHeader !== body.method) {
+    return headerMismatchError(
+      body.id,
+      `Header mismatch: Mcp-Method header '${methodHeader ?? ''}' does not match body method '${
+        body.method ?? ''
+      }'`,
+    );
+  }
+
+  if (body.method && NAME_METHODS.has(body.method,)) {
+    const nameHeader = request.headers.get('mcp-name',);
+    const bodyName = body.params?.['name'] ?? body.params?.['uri'];
+    const expected = decodeSentinel(nameHeader ?? '',);
+    if (!nameHeader || expected !== bodyName) {
+      return headerMismatchError(
+        body.id,
+        `Header mismatch: Mcp-Name header '${nameHeader ?? ''}' does not match body value '${
+          String(bodyName ?? '',)
+        }'`,
+      );
+    }
+  }
+
+  return null;
+}
+
+// Recursively remove `_meta` from a JSON-RPC message (and any nested objects)
+// so the 2025-era SDK schema accepts it. `_meta` is per-request routing
+// metadata (io.modelcontextprotocol/*) and is not needed to execute a tool.
+function stripMeta<T,>(value: T,): T {
+  if (Array.isArray(value,)) {
+    return value.map((v,) => stripMeta(v,)) as unknown as T;
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v,] of Object.entries(value as Record<string, unknown>,)) {
+      if (k === '_meta') { continue; }
+      out[k] = stripMeta(v,);
+    }
+    return out as T;
+  }
+  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +394,25 @@ export default {
       }
     }
 
+    // Read the body from a clone for header/body validation; the transport
+    // receives the original request so its body stream stays intact.
+    const rawBody = await request.clone().text();
+    let rpcBody: RpcBody | null = null;
+    try {
+      const parsed = JSON.parse(rawBody,);
+      if (parsed && typeof parsed === 'object') { rpcBody = parsed as RpcBody; }
+    } catch {
+      rpcBody = null;
+    }
+
+    // Only JSON-RPC requests (objects carrying a `method`) are subject to header
+    // validation. Malformed or non-JSON bodies are passed through to the
+    // transport, which returns its own error.
+    if (rpcBody && rpcBody.method) {
+      const headerError = validateMcpHeaders(request, rpcBody,);
+      if (headerError) { return withHeaders(headerError,); }
+    }
+
     const server = new McpServer({ name: 'azkena', version: VERSION, },);
     registerTools(server, env,);
 
@@ -279,7 +422,28 @@ export default {
       sessionIdGenerator: undefined,
     },);
     await server.connect(transport,);
-    const response = await transport.handleRequest(request,);
+
+    // The published SDK (v1.x) targets the 2025 protocol. It rejects two things
+    // that are mandatory in 2026-07-28: the `MCP-Protocol-Version: 2026-07-28`
+    // header (only 2025-era versions are "supported"), and the top-level `_meta`
+    // envelope (its strict JSON-RPC schema only allows `_meta` inside `params`).
+    // We have already validated the real header/_meta above; here we present the
+    // SDK with a shape it accepts: a supported protocol-version header and the
+    // `_meta` envelope stripped. Tool execution is identical across these
+    // versions, so the SDK dispatches correctly and we re-add the 2026-07-28
+    // framing (resultType, protocol-version header) on the way out.
+    const sdkBody = rpcBody ? stripMeta(rpcBody,) : rpcBody;
+    const sdkHeaders = new Headers(request.headers,);
+    sdkHeaders.set('mcp-protocol-version', SUPPORTED_SDK_VERSION,);
+    const sdkRequest = new Request(request.url, {
+      method: 'POST',
+      headers: sdkHeaders,
+      body: JSON.stringify(sdkBody ?? {},),
+    },);
+    const response = await transport.handleRequest(
+      sdkRequest,
+      sdkBody ? { parsedBody: sdkBody, } as Record<string, unknown> : undefined,
+    );
 
     // MCP 2026-07-28: every result carries resultType ("complete" / "input_required").
     const typed = await withResultType(response,);

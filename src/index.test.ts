@@ -158,11 +158,47 @@ describe('security headers', () => {
           'Content-Type': 'application/json',
           Accept: 'application/json, text/event-stream',
           Authorization: 'Bearer secret-token',
+          'MCP-Protocol-Version': '2026-07-28',
+          'Mcp-Method': 'tools/list',
         },
         body: JSON.stringify({
           jsonrpc: '2.0',
           id: 2,
           method: 'tools/list',
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientCapabilities': {},
+          },
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(200,);
+    expect(res.headers.get('content-type',),).toContain('application/json',);
+    const payload = (await res.json()) as { result: { resultType: string; tools: unknown[]; }; };
+    expect(payload.result.resultType,).toBe('complete',);
+    expect(Array.isArray(payload.result.tools,),).toBe(true,);
+  });
+
+  it('returns a JSON result with resultType for tools/list (SSE from SDK is converted)', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer secret-token',
+          'MCP-Protocol-Version': '2026-07-28',
+          'Mcp-Method': 'tools/list',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/list',
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientCapabilities': {},
+          },
         },),
       },),
       env,
@@ -170,10 +206,95 @@ describe('security headers', () => {
     expect(res.status,).toBe(200,);
     const text = await res.text();
     expect(text.includes('resultType',),).toBe(true,);
-    const data = text.split('data: ',)[1] ?? '{}';
-    const payload = JSON.parse(data,) as { result: { resultType: string; tools: unknown[]; }; };
+    const payload = JSON.parse(text,) as { result: { resultType: string; tools: unknown[]; }; };
     expect(payload.result.resultType,).toBe('complete',);
     expect(Array.isArray(payload.result.tools,),).toBe(true,);
+  });
+
+  it('rejects a Mcp-Method header that does not match the body method (2026-07-28)', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer secret-token',
+          'MCP-Protocol-Version': '2026-07-28',
+          'Mcp-Method': 'resources/list',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/list',
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientCapabilities': {},
+          },
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(400,);
+    const payload = (await res.json()) as { error: { code: number; }; };
+    expect(payload.error.code,).toBe(-32020,);
+  });
+
+  it('rejects a MCP-Protocol-Version header that does not match body _meta', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer secret-token',
+          'MCP-Protocol-Version': '2025-11-25',
+          'Mcp-Method': 'tools/list',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/list',
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientCapabilities': {},
+          },
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(400,);
+    const payload = (await res.json()) as { error: { code: number; }; };
+    expect(payload.error.code,).toBe(-32020,);
+  });
+
+  it('rejects a Mcp-Name header that does not match the tools/call body name', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer secret-token',
+          'MCP-Protocol-Version': '2026-07-28',
+          'Mcp-Method': 'tools/call',
+          'Mcp-Name': 'other_tool',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'list_competitions', arguments: { league: 'lcapb', }, },
+          _meta: {
+            'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+            'io.modelcontextprotocol/clientCapabilities': {},
+          },
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(400,);
+    const payload = (await res.json()) as { error: { code: number; }; };
+    expect(payload.error.code,).toBe(-32020,);
   });
 
   it('allows Mcp-Method and Mcp-Name headers via CORS', async () => {
