@@ -3,10 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+
+
+
 import { McpServer, } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport, } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { handleWellKnown, } from './discovery.js';
 import { handleLanding, } from './handlers/landing.js';
+import { handleAuthorize, } from './handlers/oauth-authorize.js';
 import { registerTools, } from './tools/index.js';
 import type { Env, } from './types.js';
 import { VERSION, } from './version.js';
@@ -201,8 +205,7 @@ function validateMcpHeaders(request: Request, body: RpcBody,): Response | null {
   if (!protoHeader || protoHeader !== protoBody) {
     return headerMismatchError(
       body.id,
-      `Header mismatch: MCP-Protocol-Version header '${
-        protoHeader ?? ''
+      `Header mismatch: MCP-Protocol-Version header '${protoHeader ?? ''
       }' does not match body _meta protocolVersion '${String(protoBody ?? '',)}'`,
     );
   }
@@ -211,8 +214,7 @@ function validateMcpHeaders(request: Request, body: RpcBody,): Response | null {
   if (!methodHeader || methodHeader !== body.method) {
     return headerMismatchError(
       body.id,
-      `Header mismatch: Mcp-Method header '${methodHeader ?? ''}' does not match body method '${
-        body.method ?? ''
+      `Header mismatch: Mcp-Method header '${methodHeader ?? ''}' does not match body method '${body.method ?? ''
       }'`,
     );
   }
@@ -224,8 +226,7 @@ function validateMcpHeaders(request: Request, body: RpcBody,): Response | null {
     if (!nameHeader || expected !== bodyName) {
       return headerMismatchError(
         body.id,
-        `Header mismatch: Mcp-Name header '${nameHeader ?? ''}' does not match body value '${
-          String(bodyName ?? '',)
+        `Header mismatch: Mcp-Name header '${nameHeader ?? ''}' does not match body value '${String(bodyName ?? '',)
         }'`,
       );
     }
@@ -247,7 +248,7 @@ function buildOAuthOptions(url: URL,) {
     tokenEndpoint: `${origin}/oauth/token`,
     clientRegistrationEndpoint: `${origin}/oauth/client/register`,
     defaultHandler: {
-      fetch: async () => new Response('Not Found', { status: 404, },),
+      fetch: (request: Request, env: Env,) => handleAuthorize(request, env,),
     },
     // The provider requires a protected route + handler to be configured. `/mcp`
     // is the resource it authorizes; the handler re-enters the worker so MCP
@@ -288,240 +289,240 @@ function stripMeta<T,>(value: T,): T {
 // returns for non-oauth paths), but `apiHandler` re-enters `workerFetch` so the
 // provider can also gate `/mcp` if a request is ever routed through it.
 export default {
-    async fetch(request: Request, env: Env, ctx?: ExecutionContext,): Promise<Response> {
-        if (request.url.includes('/oauth/')) {
-            const provider = new OAuthProvider(buildOAuthOptions(new URL(request.url,),),);
-            return provider.fetch(request, env, ctx as ExecutionContext,);
-        }
-        return workerFetch(request, env,);
-    },
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext,): Promise<Response> {
+    if (request.url.includes('/oauth/')) {
+      const provider = new OAuthProvider(buildOAuthOptions(new URL(request.url,),),);
+      return provider.fetch(request, env, ctx as ExecutionContext,);
+    }
+    return workerFetch(request, env,);
+  },
 };
 
 async function workerFetch(request: Request, env: Env,): Promise<Response> {
-    const url = new URL(request.url,);
+  const url = new URL(request.url,);
 
-    // Force HTTPS: reject plain HTTP with a permanent redirect (308 preserves
-    // method and body for MCP POST requests). Loopback hosts (local dev) exempt.
-    if (url.protocol === 'http:' && !isLoopback(url.hostname,)) {
-      url.protocol = 'https:';
-      return withHeaders(Response.redirect(url.toString(), 308,),);
+  // Force HTTPS: reject plain HTTP with a permanent redirect (308 preserves
+  // method and body for MCP POST requests). Loopback hosts (local dev) exempt.
+  if (url.protocol === 'http:' && !isLoopback(url.hostname,)) {
+    url.protocol = 'https:';
+    return withHeaders(Response.redirect(url.toString(), 308,),);
+  }
+
+  // OPTIONS preflight — respond immediately for all endpoints.
+  if (request.method === 'OPTIONS') {
+    return withHeaders(new Response(null, { status: 204, },),);
+  }
+
+  if (url.pathname === '/') {
+    // Landing page sets its own Content-Security-Policy (allows fonts + inline
+    // script/style). Apply the remaining security headers so it renders correctly.
+    const landing = handleLanding(request,);
+    const headers = new Headers(landing.headers,);
+    for (const [k, v,] of Object.entries(SECURITY_HEADERS,)) {
+      if (k !== 'Content-Security-Policy') { headers.set(k, v,); }
     }
+    for (const [k, v,] of Object.entries(CORS_HEADERS,)) { headers.set(k, v,); }
+    return new Response(landing.body, { status: landing.status, headers, },);
+  }
 
-    // OPTIONS preflight — respond immediately for all endpoints.
-    if (request.method === 'OPTIONS') {
-      return withHeaders(new Response(null, { status: 204, },),);
-    }
+  if (url.pathname === '/version') {
+    return withHeaders(Response.json({ version: VERSION, },),);
+  }
 
-    if (url.pathname === '/') {
-      // Landing page sets its own Content-Security-Policy (allows fonts + inline
-      // script/style). Apply the remaining security headers so it renders correctly.
-      const landing = handleLanding(request,);
-      const headers = new Headers(landing.headers,);
-      for (const [k, v,] of Object.entries(SECURITY_HEADERS,)) {
-        if (k !== 'Content-Security-Policy') { headers.set(k, v,); }
-      }
-      for (const [k, v,] of Object.entries(CORS_HEADERS,)) { headers.set(k, v,); }
-      return new Response(landing.body, { status: landing.status, headers, },);
-    }
+  if (url.pathname.startsWith('/.well-known/',)) {
+    const response = await handleWellKnown(request,);
+    return withHeaders(response ?? new Response('Not Found', { status: 404, },),);
+  }
 
-    if (url.pathname === '/version') {
-      return withHeaders(Response.json({ version: VERSION, },),);
-    }
+  if (url.pathname !== '/mcp') {
+    return withHeaders(new Response('Not Found', { status: 404, },),);
+  }
 
-    if (url.pathname.startsWith('/.well-known/',)) {
-      const response = await handleWellKnown(request,);
-      return withHeaders(response ?? new Response('Not Found', { status: 404, },),);
-    }
-
-    if (url.pathname !== '/mcp') {
-      return withHeaders(new Response('Not Found', { status: 404, },),);
-    }
-
-    // server/discover (MCP 2026-07-28) is a public capability pre-fetch endpoint,
-    // analogous to the unauthenticated /.well-known/ discovery documents. It only
-    // returns server metadata (name, version, capabilities, protocol version), so
-    // it is served WITHOUT auth. Real tool calls below remain fail-closed.
-    if (request.method === 'POST') {
-      const contentType = request.headers.get('Content-Type',);
-      if (contentType?.includes('application/json',)) {
-        try {
-          // Clone before reading: consuming the original request body here would
-          // leave the transport with an empty stream for real tool calls.
-          const body = (await request.clone().json()) as { method?: string; id?: string | number; };
-          if (body.method === 'server/discover') {
-            const discoverResponse = {
-              jsonrpc: '2.0',
-              id: body.id,
-              result: {
-                resultType: 'complete',
-                supportedVersions: ['2026-07-28',],
-                capabilities: {
-                  tools: {},
-                },
-                _meta: {
-                  'io.modelcontextprotocol/serverInfo': {
-                    name: 'azkena',
-                    version: VERSION,
-                  },
-                },
-                instructions:
-                  'Azkena exposes Basque pelota competition data for the Pilotariak platform '
-                  + 'via read-only tools (competitions, clubs, categories, specialties, results). '
-                  + 'Always pass a league parameter: lcapb, lidfpb, ccapb, or ctpb.',
-                ttlMs: 3600000,
-                cacheScope: 'public',
-              },
-            };
-            return withHeaders(Response.json(discoverResponse,),);
-          }
-
-          // MCP 2026-07-28 retires the initialize/initialized handshake (SEP-2575,
-          // SEP-2567). Reject it so scanners/clients do not classify azkena as a
-          // 2025-era server from the SDK's legacy protocolVersion, and so the
-          // stateless core (server/discover + per-request self-describing calls)
-          // is the only path. Capability pre-fetch happens via server/discover.
-          if (body.method === 'initialize' || body.method === 'initialized') {
-            const rejectResponse = {
-              jsonrpc: '2.0',
-              id: body.id,
-              error: {
-                code: -32601,
-                message: 'Method not found: initialize/initialized are retired in MCP 2026-07-28. '
-                  + 'Use server/discover for capability pre-fetch.',
-              },
-            };
-            return withHeaders(Response.json(rejectResponse,),);
-          }
-        } catch {
-          // If JSON parsing fails, continue with normal (authenticated) MCP handling
-        }
-      }
-    }
-
-    // Fail-closed auth: a request is authorized if it presents (a) a valid
-    // OAuth 2.0 access token issued by our authorization server (requires the
-    // OAUTH_KV binding), (b) the configured MCP_API_TOKEN, or (c) no token
-    // while arriving from a loopback host (local development only).
-    //
-    // Do NOT gate (c) on ENVIRONMENT — the default vars ship ENVIRONMENT=
-    // development, which would accidentally leave a `wrangler deploy` (without
-    // --env) wide open.
-
-    // (a) OAuth 2.0 access token — only checked when the KV binding is present.
-    let oauthAuthorized = false;
-    const authHeader = request.headers.get('Authorization',);
-    if (env.OAUTH_KV && authHeader?.startsWith('Bearer ',)) {
-      const bearer = authHeader.split(' ',)[1];
+  // server/discover (MCP 2026-07-28) is a public capability pre-fetch endpoint,
+  // analogous to the unauthenticated /.well-known/ discovery documents. It only
+  // returns server metadata (name, version, capabilities, protocol version), so
+  // it is served WITHOUT auth. Real tool calls below remain fail-closed.
+  if (request.method === 'POST') {
+    const contentType = request.headers.get('Content-Type',);
+    if (contentType?.includes('application/json',)) {
       try {
-        const api = getOAuthApi(buildOAuthOptions(url,), env,);
-        const tokenInfo = await api.unwrapToken(bearer,);
-        if (tokenInfo) { oauthAuthorized = true; }
+        // Clone before reading: consuming the original request body here would
+        // leave the transport with an empty stream for real tool calls.
+        const body = (await request.clone().json()) as { method?: string; id?: string | number; };
+        if (body.method === 'server/discover') {
+          const discoverResponse = {
+            jsonrpc: '2.0',
+            id: body.id,
+            result: {
+              resultType: 'complete',
+              supportedVersions: ['2026-07-28',],
+              capabilities: {
+                tools: {},
+              },
+              _meta: {
+                'io.modelcontextprotocol/serverInfo': {
+                  name: 'azkena',
+                  version: VERSION,
+                },
+              },
+              instructions:
+                'Azkena exposes Basque pelota competition data for the Pilotariak platform '
+                + 'via read-only tools (competitions, clubs, categories, specialties, results). '
+                + 'Always pass a league parameter: lcapb, lidfpb, ccapb, or ctpb.',
+              ttlMs: 3600000,
+              cacheScope: 'public',
+            },
+          };
+          return withHeaders(Response.json(discoverResponse,),);
+        }
+
+        // MCP 2026-07-28 retires the initialize/initialized handshake (SEP-2575,
+        // SEP-2567). Reject it so scanners/clients do not classify azkena as a
+        // 2025-era server from the SDK's legacy protocolVersion, and so the
+        // stateless core (server/discover + per-request self-describing calls)
+        // is the only path. Capability pre-fetch happens via server/discover.
+        if (body.method === 'initialize' || body.method === 'initialized') {
+          const rejectResponse = {
+            jsonrpc: '2.0',
+            id: body.id,
+            error: {
+              code: -32601,
+              message: 'Method not found: initialize/initialized are retired in MCP 2026-07-28. '
+                + 'Use server/discover for capability pre-fetch.',
+            },
+          };
+          return withHeaders(Response.json(rejectResponse,),);
+        }
       } catch {
-        // Token invalid or unverifiable — fall through to the MCP_API_TOKEN check.
+        // If JSON parsing fails, continue with normal (authenticated) MCP handling
       }
     }
+  }
 
-    if (!env.MCP_API_TOKEN && !isLoopback(url.hostname,) && !oauthAuthorized) {
+  // Fail-closed auth: a request is authorized if it presents (a) a valid
+  // OAuth 2.0 access token issued by our authorization server (requires the
+  // OAUTH_KV binding), (b) the configured MCP_API_TOKEN, or (c) no token
+  // while arriving from a loopback host (local development only).
+  //
+  // Do NOT gate (c) on ENVIRONMENT — the default vars ship ENVIRONMENT=
+  // development, which would accidentally leave a `wrangler deploy` (without
+  // --env) wide open.
+
+  // (a) OAuth 2.0 access token — only checked when the KV binding is present.
+  let oauthAuthorized = false;
+  const authHeader = request.headers.get('Authorization',);
+  if (env.OAUTH_KV && authHeader?.startsWith('Bearer ',)) {
+    const bearer = authHeader.split(' ',)[1];
+    try {
+      const api = getOAuthApi(buildOAuthOptions(url,), env,);
+      const tokenInfo = await api.unwrapToken(bearer,);
+      if (tokenInfo) { oauthAuthorized = true; }
+    } catch {
+      // Token invalid or unverifiable — fall through to the MCP_API_TOKEN check.
+    }
+  }
+
+  if (!env.MCP_API_TOKEN && !isLoopback(url.hostname,) && !oauthAuthorized) {
+    return withHeaders(new Response('Unauthorized', { status: 401, },),);
+  }
+
+  if (env.MCP_API_TOKEN && !oauthAuthorized) {
+    if (!authHeader || !authHeader.startsWith('Bearer ',)) {
+      console.warn('Missing or malformed Authorization header',);
       return withHeaders(new Response('Unauthorized', { status: 401, },),);
     }
 
-    if (env.MCP_API_TOKEN && !oauthAuthorized) {
-      if (!authHeader || !authHeader.startsWith('Bearer ',)) {
-        console.warn('Missing or malformed Authorization header',);
-        return withHeaders(new Response('Unauthorized', { status: 401, },),);
-      }
+    const token = authHeader.split(' ',)[1];
 
-      const token = authHeader.split(' ',)[1];
+    // Use subtle crypto for constant-time comparison to prevent timing attacks
+    const encoder = new TextEncoder();
+    const expectedToken = encoder.encode(env.MCP_API_TOKEN,);
+    const actualToken = encoder.encode(token,);
 
-      // Use subtle crypto for constant-time comparison to prevent timing attacks
-      const encoder = new TextEncoder();
-      const expectedToken = encoder.encode(env.MCP_API_TOKEN,);
-      const actualToken = encoder.encode(token,);
+    if (expectedToken.length !== actualToken.length) {
+      console.warn('Invalid token',);
+      return withHeaders(new Response('Unauthorized', { status: 401, },),);
+    }
 
-      if (expectedToken.length !== actualToken.length) {
-        console.warn('Invalid token',);
-        return withHeaders(new Response('Unauthorized', { status: 401, },),);
-      }
-
-      let isEqual = true;
-      for (let i = 0; i < expectedToken.length; i++) {
-        if (expectedToken[i] !== actualToken[i]) {
-          isEqual = false;
-        }
-      }
-
-      if (!isEqual) {
-        console.warn('Invalid token',);
-        return withHeaders(new Response('Unauthorized', { status: 401, },),);
+    let isEqual = true;
+    for (let i = 0; i < expectedToken.length; i++) {
+      if (expectedToken[i] !== actualToken[i]) {
+        isEqual = false;
       }
     }
 
-    // Read the body from a clone for header/body validation; the transport
-    // receives the original request so its body stream stays intact.
-    const rawBody = await request.clone().text();
-    let rpcBody: RpcBody | null = null;
-    try {
-      const parsed = JSON.parse(rawBody,);
-      if (parsed && typeof parsed === 'object') { rpcBody = parsed as RpcBody; }
-    } catch {
-      rpcBody = null;
+    if (!isEqual) {
+      console.warn('Invalid token',);
+      return withHeaders(new Response('Unauthorized', { status: 401, },),);
     }
+  }
 
-    // Only JSON-RPC requests (objects carrying a `method`) are subject to header
-    // validation. Malformed or non-JSON bodies are passed through to the
-    // transport, which returns its own error.
-    if (rpcBody && rpcBody.method) {
-      const headerError = validateMcpHeaders(request, rpcBody,);
-      if (headerError) { return withHeaders(headerError,); }
-    }
+  // Read the body from a clone for header/body validation; the transport
+  // receives the original request so its body stream stays intact.
+  const rawBody = await request.clone().text();
+  let rpcBody: RpcBody | null = null;
+  try {
+    const parsed = JSON.parse(rawBody,);
+    if (parsed && typeof parsed === 'object') { rpcBody = parsed as RpcBody; }
+  } catch {
+    rpcBody = null;
+  }
 
-    const server = new McpServer({ name: 'azkena', version: VERSION, },);
-    registerTools(server, env,);
+  // Only JSON-RPC requests (objects carrying a `method`) are subject to header
+  // validation. Malformed or non-JSON bodies are passed through to the
+  // transport, which returns its own error.
+  if (rpcBody && rpcBody.method) {
+    const headerError = validateMcpHeaders(request, rpcBody,);
+    if (headerError) { return withHeaders(headerError,); }
+  }
 
-    // Stateless mode: sessionIdGenerator undefined means no persistent session.
-    // Each request creates a fresh server — correct for Cloudflare Workers.
-    const transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    },);
-    await server.connect(transport,);
+  const server = new McpServer({ name: 'azkena', version: VERSION, },);
+  registerTools(server, env,);
 
-    // The published SDK (v1.x) targets the 2025 protocol. It rejects two things
-    // that are mandatory in 2026-07-28: the `MCP-Protocol-Version: 2026-07-28`
-    // header (only 2025-era versions are "supported"), and the top-level `_meta`
-    // envelope (its strict JSON-RPC schema only allows `_meta` inside `params`).
-    // We have already validated the real header/_meta above; here we present the
-    // SDK with a shape it accepts: a supported protocol-version header and the
-    // `_meta` envelope stripped. Tool execution is identical across these
-    // versions, so the SDK dispatches correctly and we re-add the 2026-07-28
-    // framing (resultType, protocol-version header) on the way out.
-    const sdkBody = rpcBody ? stripMeta(rpcBody,) : rpcBody;
-    const sdkHeaders = new Headers(request.headers,);
-    sdkHeaders.set('mcp-protocol-version', SUPPORTED_SDK_VERSION,);
-    const sdkRequest = new Request(request.url, {
-      method: 'POST',
-      headers: sdkHeaders,
-      body: JSON.stringify(sdkBody ?? {},),
-    },);
-    const response = await transport.handleRequest(
-      sdkRequest,
-      sdkBody ? { parsedBody: sdkBody, } as Record<string, unknown> : undefined,
-    );
+  // Stateless mode: sessionIdGenerator undefined means no persistent session.
+  // Each request creates a fresh server — correct for Cloudflare Workers.
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+  },);
+  await server.connect(transport,);
 
-    // MCP 2026-07-28: every result carries resultType ("complete" / "input_required").
-    const typed = await withResultType(response,);
+  // The published SDK (v1.x) targets the 2025 protocol. It rejects two things
+  // that are mandatory in 2026-07-28: the `MCP-Protocol-Version: 2026-07-28`
+  // header (only 2025-era versions are "supported"), and the top-level `_meta`
+  // envelope (its strict JSON-RPC schema only allows `_meta` inside `params`).
+  // We have already validated the real header/_meta above; here we present the
+  // SDK with a shape it accepts: a supported protocol-version header and the
+  // `_meta` envelope stripped. Tool execution is identical across these
+  // versions, so the SDK dispatches correctly and we re-add the 2026-07-28
+  // framing (resultType, protocol-version header) on the way out.
+  const sdkBody = rpcBody ? stripMeta(rpcBody,) : rpcBody;
+  const sdkHeaders = new Headers(request.headers,);
+  sdkHeaders.set('mcp-protocol-version', SUPPORTED_SDK_VERSION,);
+  const sdkRequest = new Request(request.url, {
+    method: 'POST',
+    headers: sdkHeaders,
+    body: JSON.stringify(sdkBody ?? {},),
+  },);
+  const response = await transport.handleRequest(
+    sdkRequest,
+    sdkBody ? { parsedBody: sdkBody, } as Record<string, unknown> : undefined,
+  );
 
-    // MCP 2026-07-28 header-based routing (SEP-2243): echo Mcp-Method / Mcp-Name
-    // so gateways/WAFs can route and meter on headers.
-    const outHeaders = new Headers(typed.headers,);
-    const mcpMethod = request.headers.get('Mcp-Method',);
-    const mcpName = request.headers.get('Mcp-Name',);
-    if (mcpMethod) { outHeaders.set('Mcp-Method', mcpMethod,); }
-    if (mcpName) { outHeaders.set('Mcp-Name', mcpName,); }
+  // MCP 2026-07-28: every result carries resultType ("complete" / "input_required").
+  const typed = await withResultType(response,);
 
-    const out = new Response(typed.body, {
-      status: typed.status,
-      statusText: typed.statusText,
-      headers: outHeaders,
-    },);
-    return withHeaders(out,);
+  // MCP 2026-07-28 header-based routing (SEP-2243): echo Mcp-Method / Mcp-Name
+  // so gateways/WAFs can route and meter on headers.
+  const outHeaders = new Headers(typed.headers,);
+  const mcpMethod = request.headers.get('Mcp-Method',);
+  const mcpName = request.headers.get('Mcp-Name',);
+  if (mcpMethod) { outHeaders.set('Mcp-Method', mcpMethod,); }
+  if (mcpName) { outHeaders.set('Mcp-Name', mcpName,); }
+
+  const out = new Response(typed.body, {
+    status: typed.status,
+    statusText: typed.statusText,
+    headers: outHeaders,
+  },);
+  return withHeaders(out,);
 }
