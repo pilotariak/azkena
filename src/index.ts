@@ -7,6 +7,7 @@ import { McpServer, } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport, } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { handleWellKnown, } from './discovery.js';
 import { handleLanding, } from './handlers/landing.js';
+import { handleAuthorize, } from './handlers/oauth-authorize.js';
 import { registerTools, } from './tools/index.js';
 import type { Env, } from './types.js';
 import { VERSION, } from './version.js';
@@ -247,7 +248,7 @@ function buildOAuthOptions(url: URL,) {
     tokenEndpoint: `${origin}/oauth/token`,
     clientRegistrationEndpoint: `${origin}/oauth/client/register`,
     defaultHandler: {
-      fetch: async () => new Response('Not Found', { status: 404, },),
+      fetch: (request: Request, env: Env,) => handleAuthorize(request, env,),
     },
     // The provider requires a protected route + handler to be configured. `/mcp`
     // is the resource it authorizes; the handler re-enters the worker so MCP

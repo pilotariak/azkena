@@ -17,12 +17,22 @@
     "LOG_LEVEL": "debug"
   },
   // OAuth 2.0 authorization server storage. REQUIRED for the `/oauth/*` endpoints.
-  // Create the namespace once, then uncomment and fill in the IDs:
+  // Create the namespace once, then fill in the IDs produced by:
   //   bunx wrangler kv namespace create OAUTH_KV
   //   bunx wrangler kv namespace create OAUTH_KV --preview
-  // "kv_namespaces": [
-  //   { "binding": "OAUTH_KV", "id": "<production-id>", "preview_id": "<preview-id>" }
-  // ],
+  // The `/oauth/authorize` consent screen will return 404 until this binding
+  // exists (the provider has no storage without it).
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "0bdfcadf4fc94bc39d09daf8e8e81302",
+      "preview_id": "REPLACE_WITH_PREVIEW_ID"
+    },
+    {
+      "binding": "OAUTH_KV",
+      "id": "0bdfcadf4fc94bc39d09daf8e8e81302"
+    }
+  ],
   "env": {
     "staging": {
       "name": "azkena-staging",
