@@ -24,7 +24,7 @@
   // exists (the provider has no storage without it).
   "kv_namespaces": [
     {
-      "binding": "AZKENA_OAUTH_KV_PROD",
+      "binding": "OAUTH_KV",
       "id": "0bdfcadf4fc94bc39d09daf8e8e81302"
     }
   ],
