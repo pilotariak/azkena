@@ -49,6 +49,80 @@ function withHeaders(response: Response,): Response {
   },);
 }
 
+// MCP 2026-07-28 requires every JSON-RPC result to carry a resultType field
+// ("complete" or "input_required") so clients can distinguish finished results
+// from those needing more input. The SDK (v1) does not emit it, so inject
+// "complete" into any JSON result that lacks it. Handles both application/json
+// and text/event-stream (SSE) MCP responses.
+interface JsonRpcMessage {
+  result?: Record<string, unknown> | null;
+}
+
+function injectResultType(payload: unknown,): boolean {
+  if (typeof payload !== 'object' || payload === null) { return false; }
+  const message = payload as JsonRpcMessage;
+  if (typeof message.result !== 'object' || message.result === null) { return false; }
+  if (message.result.resultType === undefined) {
+    message.result.resultType = 'complete';
+    return true;
+  }
+  return false;
+}
+
+// Parse an SSE body, inject resultType into every JSON-RPC data frame, and
+// rebuild the framing. Returns the original text if parsing fails.
+function rewriteSse(text: string,): string {
+  const frames = text.split('\n\n',);
+  const out = frames.map((frame,) => {
+    if (!frame.trim()) { return frame; }
+    let event = 'message';
+    const dataLines: string[] = [];
+    for (const line of frame.split('\n',)) {
+      if (line.startsWith('event:',)) { event = line.slice(6,).trim(); }
+      else if (line.startsWith('data:',)) { dataLines.push(line.slice(5,).trim(),); }
+    }
+    if (dataLines.length === 0) { return frame; }
+    try {
+      const payload = JSON.parse(dataLines.join('\n',),);
+      injectResultType(payload,);
+      return `event: ${event}\ndata: ${JSON.stringify(payload,)}\n`;
+    } catch {
+      return frame;
+    }
+  },);
+  return out.join('\n\n',);
+}
+
+async function withResultType(response: Response,): Promise<Response> {
+  const contentType = response.headers.get('Content-Type',) ?? '';
+
+  if (contentType.includes('application/json',)) {
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return response;
+    }
+    injectResultType(payload,);
+    return new Response(JSON.stringify(payload,), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    },);
+  }
+
+  if (contentType.includes('text/event-stream',)) {
+    const text = await response.text();
+    return new Response(rewriteSse(text,), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    },);
+  }
+
+  return response;
+}
+
 // ---------------------------------------------------------------------------
 // Worker entry point
 // ---------------------------------------------------------------------------
@@ -102,7 +176,9 @@ export default {
       const contentType = request.headers.get('Content-Type',);
       if (contentType?.includes('application/json',)) {
         try {
-          const body = (await request.json()) as { method?: string; id?: string | number; };
+          // Clone before reading: consuming the original request body here would
+          // leave the transport with an empty stream for real tool calls.
+          const body = (await request.clone().json()) as { method?: string; id?: string | number; };
           if (body.method === 'server/discover') {
             const discoverResponse = {
               jsonrpc: '2.0',
@@ -205,17 +281,20 @@ export default {
     await server.connect(transport,);
     const response = await transport.handleRequest(request,);
 
+    // MCP 2026-07-28: every result carries resultType ("complete" / "input_required").
+    const typed = await withResultType(response,);
+
     // MCP 2026-07-28 header-based routing (SEP-2243): echo Mcp-Method / Mcp-Name
     // so gateways/WAFs can route and meter on headers.
-    const outHeaders = new Headers(response.headers,);
+    const outHeaders = new Headers(typed.headers,);
     const mcpMethod = request.headers.get('Mcp-Method',);
     const mcpName = request.headers.get('Mcp-Name',);
     if (mcpMethod) { outHeaders.set('Mcp-Method', mcpMethod,); }
     if (mcpName) { outHeaders.set('Mcp-Name', mcpName,); }
 
-    const out = new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
+    const out = new Response(typed.body, {
+      status: typed.status,
+      statusText: typed.statusText,
       headers: outHeaders,
     },);
     return withHeaders(out,);

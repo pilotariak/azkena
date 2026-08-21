@@ -150,6 +150,32 @@ describe('security headers', () => {
     expect(payload.error.code,).toBe(-32601,);
   });
 
+  it('adds resultType to tools/list results (2026-07-28)', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          Authorization: 'Bearer secret-token',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/list',
+        },),
+      },),
+      env,
+    );
+    expect(res.status,).toBe(200,);
+    const text = await res.text();
+    expect(text.includes('resultType',),).toBe(true,);
+    const data = text.split('data: ',)[1] ?? '{}';
+    const payload = JSON.parse(data,) as { result: { resultType: string; tools: unknown[]; }; };
+    expect(payload.result.resultType,).toBe('complete',);
+    expect(Array.isArray(payload.result.tools,),).toBe(true,);
+  });
+
   it('allows Mcp-Method and Mcp-Name headers via CORS', async () => {
     const res = await worker.fetch(
       new Request('https://mcp.pilotariak.com/mcp', { method: 'OPTIONS', },),
