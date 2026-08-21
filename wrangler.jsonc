@@ -5,7 +5,10 @@
   "name": "azkena",
   "main": "src/index.ts",
   "compatibility_date": "2026-04-18",
-  "compatibility_flags": ["nodejs_compat_v2"],
+  // `global_fetch_strictly_public` is required by @cloudflare/workers-oauth-provider
+  // so it may fetch Client ID Metadata Documents (CIMD) from arbitrary public URLs
+  // during dynamic client registration / token exchange.
+  "compatibility_flags": ["nodejs_compat_v2", "global_fetch_strictly_public"],
   // Default vars for `wrangler dev` (no --env flag).
   // Staging/production override these below.
   "vars": {
@@ -13,6 +16,13 @@
     "FRONTIS_URL": "https://frontis-gateway.pilotariak.com/graphql",
     "LOG_LEVEL": "debug"
   },
+  // OAuth 2.0 authorization server storage. REQUIRED for the `/oauth/*` endpoints.
+  // Create the namespace once, then uncomment and fill in the IDs:
+  //   bunx wrangler kv namespace create OAUTH_KV
+  //   bunx wrangler kv namespace create OAUTH_KV --preview
+  // "kv_namespaces": [
+  //   { "binding": "OAUTH_KV", "id": "<production-id>", "preview_id": "<preview-id>" }
+  // ],
   "env": {
     "staging": {
       "name": "azkena-staging",

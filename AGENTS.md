@@ -169,10 +169,33 @@ so it always reflects the actual content served.
 
 ## Authentication and Security
 
-Azkena uses a Bearer token mechanism for authentication.
+Azkena supports:
+- Bearer token mechanism for authentication.
+- Client ID Metadata Documents (CIMD) for client registration.
 
-- **Current Mechanism:** The worker checks for an `Authorization` header containing a Bearer token that must match the `MCP_API_TOKEN` environment variable. If `MCP_API_TOKEN` is not set, no authentication is required (for local development only).
-- **Robustness/Future Path:** To implement more robust authorization (e.g., OAuth 2.1), we recommend adopting the `workers-oauth-provider` library. This allows for integration with identity providers or handling the full OAuth flow within the Worker. For detailed documentation and implementation examples, see the [Cloudflare Authorization documentation](https://developers.cloudflare.com/agents/model-context-protocol/protocol/authorization/).
+- **Current Mechanism:** The worker accepts one of three credentials on the MCP endpoint:
+  1. A valid OAuth 2.0 access token issued by the built-in authorization server
+     (`/oauth/authorize`, `/oauth/token`, `/oauth/client/register`), backed by the
+     `OAUTH_KV` KV binding. This is the path MCP clients such as Codex use.
+  2. A Bearer token matching `MCP_API_TOKEN` (simple shared-secret auth).
+  3. No token when the request originates from a loopback host (local development only).
+  If `MCP_API_TOKEN` is not set and the request is not loopback and not carrying a valid
+  OAuth token, the worker refuses with `401` (fail-closed).
+- **OAuth 2.0 authorization server:** Implemented with `@cloudflare/workers-oauth-provider`.
+  The `/oauth/*` routes are delegated to `OAuthProvider`; the `/mcp` route additionally
+  accepts OAuth-issued access tokens via `getOAuthApi(...).unwrapToken`. The provider stores
+  clients, grants, and tokens in the `OAUTH_KV` namespace and requires the
+  `global_fetch_strictly_public` compatibility flag (so it can fetch CIMD documents).
+- **Client Registration:** Dynamic Client Registration (RFC 7591) and Client ID Metadata
+  Documents (CIMD, `clientIdMetadataDocumentEnabled: true`) are both supported, so clients
+  may register by URL (`https://…/client/metadata`) or by POSTing metadata to
+  `/oauth/client/register`.
+- **Setup:** Create the KV namespace and wire it up (see the commented `kv_namespaces` block
+  in `wrangler.jsonc`):
+  ```bash
+  bunx wrangler kv namespace create OAUTH_KV
+  bunx wrangler kv namespace create OAUTH_KV --preview
+  ```
 
 ## Key Conventions
 

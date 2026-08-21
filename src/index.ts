@@ -10,6 +10,7 @@ import { handleLanding, } from './handlers/landing.js';
 import { registerTools, } from './tools/index.js';
 import type { Env, } from './types.js';
 import { VERSION, } from './version.js';
+import { OAuthProvider, getOAuthApi, } from '@cloudflare/workers-oauth-provider';
 
 // ---------------------------------------------------------------------------
 // Security & CORS helpers
@@ -236,6 +237,25 @@ function validateMcpHeaders(request: Request, body: RpcBody,): Response | null {
 // Recursively remove `_meta` from a JSON-RPC message (and any nested objects)
 // so the 2025-era SDK schema accepts it. `_meta` is per-request routing
 // metadata (io.modelcontextprotocol/*) and is not needed to execute a tool.
+// Build the OAuth 2.0 provider options for the current request origin.
+// The provider implements `/oauth/authorize`, `/oauth/token`, and
+// `/oauth/client/register` itself, backed by the `OAUTH_KV` binding.
+function buildOAuthOptions(url: URL,) {
+  const origin = `${url.protocol}//${url.host}`;
+  return {
+    authorizeEndpoint: `${origin}/oauth/authorize`,
+    tokenEndpoint: `${origin}/oauth/token`,
+    clientRegistrationEndpoint: `${origin}/oauth/client/register`,
+    defaultHandler: {
+      fetch: async () => new Response('Not Found', { status: 404, },),
+    },
+    // Allow clients registered via a Client ID Metadata Document (CIMD), which
+    // are always public (`token_endpoint_auth_method: none`).
+    clientIdMetadataDocumentEnabled: true,
+    scopesSupported: ['mcp',],
+  };
+}
+
 function stripMeta<T,>(value: T,): T {
   if (Array.isArray(value,)) {
     return value.map((v,) => stripMeta(v,)) as unknown as T;
@@ -256,7 +276,7 @@ function stripMeta<T,>(value: T,): T {
 // ---------------------------------------------------------------------------
 
 export default {
-  async fetch(request: Request, env: Env,): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext,): Promise<Response> {
     const url = new URL(request.url,);
 
     // Force HTTPS: reject plain HTTP with a permanent redirect (308 preserves
@@ -285,6 +305,11 @@ export default {
 
     if (url.pathname === '/version') {
       return withHeaders(Response.json({ version: VERSION, },),);
+    }
+
+    if (url.pathname.startsWith('/oauth/',)) {
+      const provider = new OAuthProvider(buildOAuthOptions(url,),);
+      return provider.fetch(request, env, ctx as ExecutionContext,);
     }
 
     if (url.pathname.startsWith('/.well-known/',)) {
@@ -357,17 +382,34 @@ export default {
       }
     }
 
-    // Fail-closed auth: only loopback hosts (local dev) may connect without a
-    // token. Any deployed worker must have MCP_API_TOKEN configured, otherwise
-    // it refuses to serve the MCP endpoint. Do NOT gate this on ENVIRONMENT —
-    // the default vars ship ENVIRONMENT=development, which would accidentally
-    // leave a `wrangler deploy` (without --env) wide open.
-    if (!env.MCP_API_TOKEN && !isLoopback(url.hostname,)) {
+    // Fail-closed auth: a request is authorized if it presents (a) a valid
+    // OAuth 2.0 access token issued by our authorization server (requires the
+    // OAUTH_KV binding), (b) the configured MCP_API_TOKEN, or (c) no token
+    // while arriving from a loopback host (local development only).
+    //
+    // Do NOT gate (c) on ENVIRONMENT — the default vars ship ENVIRONMENT=
+    // development, which would accidentally leave a `wrangler deploy` (without
+    // --env) wide open.
+
+    // (a) OAuth 2.0 access token — only checked when the KV binding is present.
+    let oauthAuthorized = false;
+    const authHeader = request.headers.get('Authorization',);
+    if (env.OAUTH_KV && authHeader?.startsWith('Bearer ',)) {
+      const bearer = authHeader.split(' ',)[1];
+      try {
+        const api = getOAuthApi(buildOAuthOptions(url,), env,);
+        const tokenInfo = await api.unwrapToken(bearer,);
+        if (tokenInfo) { oauthAuthorized = true; }
+      } catch {
+        // Token invalid or unverifiable — fall through to the MCP_API_TOKEN check.
+      }
+    }
+
+    if (!env.MCP_API_TOKEN && !isLoopback(url.hostname,) && !oauthAuthorized) {
       return withHeaders(new Response('Unauthorized', { status: 401, },),);
     }
 
-    if (env.MCP_API_TOKEN) {
-      const authHeader = request.headers.get('Authorization',);
+    if (env.MCP_API_TOKEN && !oauthAuthorized) {
       if (!authHeader || !authHeader.startsWith('Bearer ',)) {
         console.warn('Missing or malformed Authorization header',);
         return withHeaders(new Response('Unauthorized', { status: 401, },),);
