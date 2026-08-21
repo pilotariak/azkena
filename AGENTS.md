@@ -169,9 +169,12 @@ so it always reflects the actual content served.
 
 ## Authentication and Security
 
-Azkena uses a Bearer token mechanism for authentication.
+Azkena supports:
+- Bearer token mechanism for authentication.
+- Client ID Metadata Documents (CIMD) for client registration.
 
 - **Current Mechanism:** The worker checks for an `Authorization` header containing a Bearer token that must match the `MCP_API_TOKEN` environment variable. If `MCP_API_TOKEN` is not set, no authentication is required (for local development only).
+- **Client Registration:** CIMD is supported for standardized client metadata exchange as per MCP specification.
 - **Robustness/Future Path:** To implement more robust authorization (e.g., OAuth 2.1), we recommend adopting the `workers-oauth-provider` library. This allows for integration with identity providers or handling the full OAuth flow within the Worker. For detailed documentation and implementation examples, see the [Cloudflare Authorization documentation](https://developers.cloudflare.com/agents/model-context-protocol/protocol/authorization/).
 
 ## Key Conventions
