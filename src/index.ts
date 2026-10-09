@@ -20,6 +20,9 @@ import { OAuthProvider, getOAuthApi, } from '@cloudflare/workers-oauth-provider'
 // Security & CORS helpers
 // ---------------------------------------------------------------------------
 
+// The only MCP protocol version this server speaks (see SUPPORTED_SDK_VERSION below for the SDK shim).
+const PROTOCOL_VERSION = '2026-07-28';
+
 const SECURITY_HEADERS: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
@@ -27,14 +30,17 @@ const SECURITY_HEADERS: Record<string, string> = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Content-Security-Policy': 'default-src \'none\'',
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-  'MCP-Protocol-Version': '2026-07-28',
+  'MCP-Protocol-Version': PROTOCOL_VERSION,
 };
 
 // CORS is open: all azkena data is public, no ambient credentials.
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Mcp-Method, Mcp-Name',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Mcp-Method, Mcp-Name, MCP-Protocol-Version',
+  // Custom response headers are invisible to browser JS without this (fetch() hides
+  // non-simple response headers by default even when Allow-Origin is '*').
+  'Access-Control-Expose-Headers': 'WWW-Authenticate, MCP-Protocol-Version, Mcp-Method, Mcp-Name',
 };
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1',],);
@@ -66,6 +72,7 @@ function withHeaders(response: Response,): Response {
 // and text/event-stream (SSE) MCP responses.
 interface JsonRpcMessage {
   result?: Record<string, unknown> | null;
+  error?: { code?: number; } | null;
 }
 
 function injectResultType(payload: unknown,): boolean {
@@ -77,6 +84,17 @@ function injectResultType(payload: unknown,): boolean {
     return true;
   }
   return false;
+}
+
+// Spec: "If the server does not implement the requested RPC method, it MUST
+// respond with 404 Not Found and a JSON-RPC error with code -32601." The SDK
+// returns -32601 with HTTP 200, so bump the status before relaying it.
+function statusForPayload(payload: unknown, fallback: number,): number {
+  if (payload && typeof payload === 'object') {
+    const error = (payload as JsonRpcMessage).error;
+    if (error && typeof error === 'object' && error.code === -32601) { return 404; }
+  }
+  return fallback;
 }
 
 // Extract the final JSON-RPC message (the one carrying `result` or `error`)
@@ -120,7 +138,7 @@ async function withResultType(response: Response,): Promise<Response> {
     const injected = injectResultType(payload,);
     console.log(`[withResultType] Injected resultType: ${injected}`);
     return new Response(JSON.stringify(payload,), {
-      status: response.status,
+      status: statusForPayload(payload, response.status,),
       statusText: response.statusText,
       headers: response.headers,
     },);
@@ -141,7 +159,7 @@ async function withResultType(response: Response,): Promise<Response> {
       const headers = new Headers(response.headers,);
       headers.set('Content-Type', 'application/json; charset=utf-8',);
       return new Response(JSON.stringify(json,), {
-        status: response.status,
+        status: statusForPayload(json, response.status,),
         statusText: response.statusText,
         headers,
       },);
@@ -166,7 +184,12 @@ interface RpcBody {
   id?: string | number | null;
   method?: string;
   params?: Record<string, unknown>;
-  _meta?: Record<string, unknown>;
+}
+
+// Per spec, `_meta` lives inside `params`, not at the top level of the message.
+function requestMeta(body: RpcBody,): Record<string, unknown> | undefined {
+  const meta = body.params?.['_meta'];
+  return meta && typeof meta === 'object' ? meta as Record<string, unknown> : undefined;
 }
 
 // Mcp-Name and Mcp-Param-* values may be Base64-encoded using the sentinel
@@ -191,7 +214,46 @@ function headerMismatchError(id: unknown, message: string,): Response {
     status: 400,
     headers: {
       'content-type': 'application/json; charset=utf-8',
-      'mcp-protocol-version': '2026-07-28',
+      'mcp-protocol-version': PROTOCOL_VERSION,
+      'access-control-allow-origin': '*',
+    },
+  },);
+}
+
+// UnsupportedProtocolVersionError: code -32022, per the MCP-specification sub-range (schema#unsupportedprotocolversionerror).
+function unsupportedProtocolVersionError(id: unknown, requested: string,): Response {
+  const payload = {
+    jsonrpc: '2.0',
+    id: id ?? null,
+    error: {
+      code: -32022,
+      message: 'Unsupported protocol version',
+      data: { supported: [PROTOCOL_VERSION,], requested, },
+    },
+  };
+  return new Response(JSON.stringify(payload,), {
+    status: 400,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'access-control-allow-origin': '*',
+    },
+  },);
+}
+
+// JSON-RPC batching is unsupported here; the SDK transport still parses arrays, so reject first.
+function batchNotSupportedError(): Response {
+  const payload = {
+    jsonrpc: '2.0',
+    id: null,
+    error: {
+      code: -32600,
+      message: 'Invalid Request: JSON-RPC batching is not supported.',
+    },
+  };
+  return new Response(JSON.stringify(payload,), {
+    status: 400,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
       'access-control-allow-origin': '*',
     },
   },);
@@ -201,13 +263,18 @@ const NAME_METHODS = new Set(['tools/call', 'resources/read', 'prompts/get',],);
 
 function validateMcpHeaders(request: Request, body: RpcBody,): Response | null {
   const protoHeader = request.headers.get('mcp-protocol-version',);
-  const protoBody = body._meta?.['io.modelcontextprotocol/protocolVersion'];
+  const protoBody = requestMeta(body,)?.['io.modelcontextprotocol/protocolVersion'];
   if (!protoHeader || protoHeader !== protoBody) {
     return headerMismatchError(
       body.id,
       `Header mismatch: MCP-Protocol-Version header '${protoHeader ?? ''
       }' does not match body _meta protocolVersion '${String(protoBody ?? '',)}'`,
     );
+  }
+
+  // Header and body agree, but may still both claim an unsupported version (e.g. '2025-11-25').
+  if (protoHeader !== PROTOCOL_VERSION) {
+    return unsupportedProtocolVersionError(body.id, protoHeader,);
   }
 
   const methodHeader = request.headers.get('mcp-method',);
@@ -233,6 +300,24 @@ function validateMcpHeaders(request: Request, body: RpcBody,): Response | null {
   }
 
   return null;
+}
+
+// Per the Authorization spec, a 401 MUST let the client discover the resource
+// metadata URL via WWW-Authenticate so it can complete OAuth on its own
+// (dynamic client registration / CIMD) instead of only working for a caller
+// that already has a shared MCP_API_TOKEN out of band.
+function unauthorizedResponse(url: URL,): Response {
+  const origin = `${url.protocol}//${url.host}`;
+  // No `scope=` param: discovery.ts's resource metadata and the OAuth provider's
+  // scopesSupported currently disagree on scope names, so this omits scope
+  // guidance rather than add a third, possibly-wrong value.
+  return new Response('Unauthorized', {
+    status: 401,
+    headers: {
+      'WWW-Authenticate':
+        `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"`,
+    },
+  },);
 }
 
 // Recursively remove `_meta` from a JSON-RPC message (and any nested objects)
@@ -355,7 +440,7 @@ async function workerFetch(request: Request, env: Env,): Promise<Response> {
             id: body.id,
             result: {
               resultType: 'complete',
-              supportedVersions: ['2026-07-28',],
+              supportedVersions: [PROTOCOL_VERSION,],
               capabilities: {
                 tools: {},
               },
@@ -391,7 +476,7 @@ async function workerFetch(request: Request, env: Env,): Promise<Response> {
                 + 'Use server/discover for capability pre-fetch.',
             },
           };
-          return withHeaders(Response.json(rejectResponse,),);
+          return withHeaders(Response.json(rejectResponse, { status: 404, },),);
         }
       } catch {
         // If JSON parsing fails, continue with normal (authenticated) MCP handling
@@ -423,13 +508,13 @@ async function workerFetch(request: Request, env: Env,): Promise<Response> {
   }
 
   if (!env.MCP_API_TOKEN && !isLoopback(url.hostname,) && !oauthAuthorized) {
-    return withHeaders(new Response('Unauthorized', { status: 401, },),);
+    return withHeaders(unauthorizedResponse(url,),);
   }
 
   if (env.MCP_API_TOKEN && !oauthAuthorized) {
     if (!authHeader || !authHeader.startsWith('Bearer ',)) {
       console.warn('Missing or malformed Authorization header',);
-      return withHeaders(new Response('Unauthorized', { status: 401, },),);
+      return withHeaders(unauthorizedResponse(url,),);
     }
 
     const token = authHeader.split(' ',)[1];
@@ -441,7 +526,7 @@ async function workerFetch(request: Request, env: Env,): Promise<Response> {
 
     if (expectedToken.length !== actualToken.length) {
       console.warn('Invalid token',);
-      return withHeaders(new Response('Unauthorized', { status: 401, },),);
+      return withHeaders(unauthorizedResponse(url,),);
     }
 
     let isEqual = true;
@@ -453,27 +538,44 @@ async function workerFetch(request: Request, env: Env,): Promise<Response> {
 
     if (!isEqual) {
       console.warn('Invalid token',);
-      return withHeaders(new Response('Unauthorized', { status: 401, },),);
+      return withHeaders(unauthorizedResponse(url,),);
     }
   }
 
   // Read the body from a clone for header/body validation; the transport
   // receives the original request so its body stream stays intact.
   const rawBody = await request.clone().text();
-  let rpcBody: RpcBody | null = null;
+  let parsedBody: unknown;
   try {
-    const parsed = JSON.parse(rawBody,);
-    if (parsed && typeof parsed === 'object') { rpcBody = parsed as RpcBody; }
+    parsedBody = JSON.parse(rawBody,);
   } catch {
-    rpcBody = null;
+    parsedBody = undefined;
   }
 
-  // Only JSON-RPC requests (objects carrying a `method`) are subject to header
-  // validation. Malformed or non-JSON bodies are passed through to the
-  // transport, which returns its own error.
+  // The SDK transport still accepts and dispatches JSON-RPC batches; reject them outright.
+  if (Array.isArray(parsedBody,)) {
+    return withHeaders(batchNotSupportedError(),);
+  }
+
+  const rpcBody: RpcBody | null = (parsedBody && typeof parsedBody === 'object')
+    ? parsedBody as RpcBody
+    : null;
+
+  // Method-less, non-object, or malformed bodies skip validateMcpHeaders but must still be
+  // gated on the protocol version so they can't reach the SDK's shimmed transport unchecked.
   if (rpcBody && rpcBody.method) {
     const headerError = validateMcpHeaders(request, rpcBody,);
     if (headerError) { return withHeaders(headerError,); }
+  } else {
+    const protoHeader = request.headers.get('mcp-protocol-version',);
+    if (!protoHeader) {
+      return withHeaders(
+        headerMismatchError(null, 'Header mismatch: MCP-Protocol-Version header is required',),
+      );
+    }
+    if (protoHeader !== PROTOCOL_VERSION) {
+      return withHeaders(unsupportedProtocolVersionError(null, protoHeader,),);
+    }
   }
 
   const server = new McpServer({ name: 'azkena', version: VERSION, },);
@@ -486,13 +588,12 @@ async function workerFetch(request: Request, env: Env,): Promise<Response> {
   },);
   await server.connect(transport,);
 
-  // The published SDK (v1.x) targets the 2025 protocol. It rejects two things
-  // that are mandatory in 2026-07-28: the `MCP-Protocol-Version: 2026-07-28`
-  // header (only 2025-era versions are "supported"), and the top-level `_meta`
-  // envelope (its strict JSON-RPC schema only allows `_meta` inside `params`).
-  // We have already validated the real header/_meta above; here we present the
-  // SDK with a shape it accepts: a supported protocol-version header and the
-  // `_meta` envelope stripped. Tool execution is identical across these
+  // The published SDK (v1.x) targets the 2025 protocol: it rejects the
+  // `MCP-Protocol-Version: 2026-07-28` header (only 2025-era versions are
+  // "supported") and its strict schema doesn't expect our `params._meta`
+  // fields. We have already validated the real header/_meta above; here we
+  // present the SDK with a shape it accepts: a supported protocol-version
+  // header and `_meta` stripped. Tool execution is identical across these
   // versions, so the SDK dispatches correctly and we re-add the 2026-07-28
   // framing (resultType, protocol-version header) on the way out.
   const sdkBody = rpcBody ? stripMeta(rpcBody,) : rpcBody;
