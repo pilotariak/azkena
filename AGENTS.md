@@ -82,8 +82,9 @@ curl -X POST http://localhost:8787/mcp \
 curl -X POST http://localhost:8787/mcp \
   -H "Content-Type: application/json" \
   -H "Mcp-Method: tools/list" \
+  -H "MCP-Protocol-Version: 2026-07-28" \
   -H "Authorization: Bearer <token>" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}'
 ```
 
 ## Connecting to Claude Desktop
@@ -204,6 +205,8 @@ Azkena supports:
 - Protocol: MCP **2026-07-28** stateless core — the `initialize`/`initialized` handshake and
   `Mcp-Session-Id` header are retired. Each request is self-describing; `server/discover` may be
   used for capability pre-fetching. Every response carries `MCP-Protocol-Version: 2026-07-28`.
+- `2026-07-28` is the only supported version: any other value (or a mismatch between the header
+  and body `_meta`) gets `400` / `-32000` or `-32020`, and JSON-RPC batches get `400` / `-32600`.
 - Streamable HTTP requests accept/echo `Mcp-Method` / `Mcp-Name` headers (SEP-2243) so gateways
   and WAFs can route and meter on headers.
 - List-type tool responses carry `ttlMs` / `cacheScope` cache hints (SEP-2549).

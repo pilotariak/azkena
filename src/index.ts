@@ -20,6 +20,9 @@ import { OAuthProvider, getOAuthApi, } from '@cloudflare/workers-oauth-provider'
 // Security & CORS helpers
 // ---------------------------------------------------------------------------
 
+// The only MCP protocol version this server speaks (see SUPPORTED_SDK_VERSION below for the SDK shim).
+const PROTOCOL_VERSION = '2026-07-28';
+
 const SECURITY_HEADERS: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
@@ -27,7 +30,7 @@ const SECURITY_HEADERS: Record<string, string> = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Content-Security-Policy': 'default-src \'none\'',
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-  'MCP-Protocol-Version': '2026-07-28',
+  'MCP-Protocol-Version': PROTOCOL_VERSION,
 };
 
 // CORS is open: all azkena data is public, no ambient credentials.
@@ -191,7 +194,47 @@ function headerMismatchError(id: unknown, message: string,): Response {
     status: 400,
     headers: {
       'content-type': 'application/json; charset=utf-8',
-      'mcp-protocol-version': '2026-07-28',
+      'mcp-protocol-version': PROTOCOL_VERSION,
+      'access-control-allow-origin': '*',
+    },
+  },);
+}
+
+// Mirrors the SDK's own "Unsupported protocol version" error shape (webStandardStreamableHttp.js).
+function unsupportedProtocolVersionError(id: unknown, received: string | null,): Response {
+  const payload = {
+    jsonrpc: '2.0',
+    id: id ?? null,
+    error: {
+      code: -32000,
+      message: `Bad Request: Unsupported protocol version: ${
+        received ?? '(missing)'
+      } (supported versions: ${PROTOCOL_VERSION})`,
+    },
+  };
+  return new Response(JSON.stringify(payload,), {
+    status: 400,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'access-control-allow-origin': '*',
+    },
+  },);
+}
+
+// JSON-RPC batching is unsupported here; the SDK transport still parses arrays, so reject first.
+function batchNotSupportedError(): Response {
+  const payload = {
+    jsonrpc: '2.0',
+    id: null,
+    error: {
+      code: -32600,
+      message: 'Invalid Request: JSON-RPC batching is not supported.',
+    },
+  };
+  return new Response(JSON.stringify(payload,), {
+    status: 400,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
       'access-control-allow-origin': '*',
     },
   },);
@@ -208,6 +251,11 @@ function validateMcpHeaders(request: Request, body: RpcBody,): Response | null {
       `Header mismatch: MCP-Protocol-Version header '${protoHeader ?? ''
       }' does not match body _meta protocolVersion '${String(protoBody ?? '',)}'`,
     );
+  }
+
+  // Header and body agree, but may still both claim an unsupported version (e.g. '2025-11-25').
+  if (protoHeader !== PROTOCOL_VERSION) {
+    return unsupportedProtocolVersionError(body.id, protoHeader,);
   }
 
   const methodHeader = request.headers.get('mcp-method',);
@@ -355,7 +403,7 @@ async function workerFetch(request: Request, env: Env,): Promise<Response> {
             id: body.id,
             result: {
               resultType: 'complete',
-              supportedVersions: ['2026-07-28',],
+              supportedVersions: [PROTOCOL_VERSION,],
               capabilities: {
                 tools: {},
               },
@@ -460,20 +508,32 @@ async function workerFetch(request: Request, env: Env,): Promise<Response> {
   // Read the body from a clone for header/body validation; the transport
   // receives the original request so its body stream stays intact.
   const rawBody = await request.clone().text();
-  let rpcBody: RpcBody | null = null;
+  let parsedBody: unknown;
   try {
-    const parsed = JSON.parse(rawBody,);
-    if (parsed && typeof parsed === 'object') { rpcBody = parsed as RpcBody; }
+    parsedBody = JSON.parse(rawBody,);
   } catch {
-    rpcBody = null;
+    parsedBody = undefined;
   }
 
-  // Only JSON-RPC requests (objects carrying a `method`) are subject to header
-  // validation. Malformed or non-JSON bodies are passed through to the
-  // transport, which returns its own error.
+  // The SDK transport still accepts and dispatches JSON-RPC batches; reject them outright.
+  if (Array.isArray(parsedBody,)) {
+    return withHeaders(batchNotSupportedError(),);
+  }
+
+  const rpcBody: RpcBody | null = (parsedBody && typeof parsedBody === 'object')
+    ? parsedBody as RpcBody
+    : null;
+
+  // Method-less, non-object, or malformed bodies skip validateMcpHeaders but must still be
+  // gated on the protocol version so they can't reach the SDK's shimmed transport unchecked.
   if (rpcBody && rpcBody.method) {
     const headerError = validateMcpHeaders(request, rpcBody,);
     if (headerError) { return withHeaders(headerError,); }
+  } else {
+    const protoHeader = request.headers.get('mcp-protocol-version',);
+    if (protoHeader !== PROTOCOL_VERSION) {
+      return withHeaders(unsupportedProtocolVersionError(null, protoHeader,),);
+    }
   }
 
   const server = new McpServer({ name: 'azkena', version: VERSION, },);
