@@ -565,3 +565,57 @@ describe('security headers', () => {
     expect(exposed,).toContain('MCP-Protocol-Version',);
   });
 });
+
+describe('rate limiting', () => {
+  it('returns 429 with Retry-After when the limiter rejects an /mcp request', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer secret-token', },
+      },),
+      { ...env, RATE_LIMITER: { limit: async () => ({ success: false, }), }, },
+    );
+    expect(res.status,).toBe(429,);
+    expect(res.headers.get('retry-after',),).toBe('60',);
+  });
+
+  it('returns 429 for /oauth/* paths too (checked before the oauth branch)', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/oauth/token', { method: 'POST', },),
+      { ...env, RATE_LIMITER: { limit: async () => ({ success: false, }), }, },
+    );
+    expect(res.status,).toBe(429,);
+  });
+
+  it('passes requests through when the limiter allows them', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/version',),
+      { ...env, RATE_LIMITER: { limit: async () => ({ success: true, }), }, },
+    );
+    expect(res.status,).toBe(200,);
+  });
+
+  it('is backward compatible when no RATE_LIMITER binding is configured', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/version',),
+      env,
+    );
+    expect(res.status,).toBe(200,);
+  });
+
+  it('exempts loopback hosts even when the limiter would reject', async () => {
+    const res = await worker.fetch(
+      new Request('http://localhost:8787/version',),
+      { ...env, RATE_LIMITER: { limit: async () => ({ success: false, }), }, },
+    );
+    expect(res.status,).toBe(200,);
+  });
+
+  it('never rate-limits OPTIONS preflight', async () => {
+    const res = await worker.fetch(
+      new Request('https://mcp.pilotariak.com/mcp', { method: 'OPTIONS', },),
+      { ...env, RATE_LIMITER: { limit: async () => ({ success: false, }), }, },
+    );
+    expect(res.status,).toBe(204,);
+  });
+});

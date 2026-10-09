@@ -40,7 +40,7 @@ const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, Mcp-Method, Mcp-Name, MCP-Protocol-Version',
   // Custom response headers are invisible to browser JS without this (fetch() hides
   // non-simple response headers by default even when Allow-Origin is '*').
-  'Access-Control-Expose-Headers': 'WWW-Authenticate, MCP-Protocol-Version, Mcp-Method, Mcp-Name',
+  'Access-Control-Expose-Headers': 'WWW-Authenticate, MCP-Protocol-Version, Mcp-Method, Mcp-Name, Retry-After',
 };
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1',],);
@@ -306,6 +306,33 @@ function validateMcpHeaders(request: Request, body: RpcBody,): Response | null {
 // metadata URL via WWW-Authenticate so it can complete OAuth on its own
 // (dynamic client registration / CIMD) instead of only working for a caller
 // that already has a shared MCP_API_TOKEN out of band.
+// 60 req/60s per client IP is enforced by the RATE_LIMITER binding (see
+// wrangler.jsonc). Not JSON-RPC shaped: this can fire pre-JSON-parse on any
+// route, not just /mcp.
+function rateLimitedResponse(): Response {
+  return new Response('Too Many Requests', {
+    status: 429,
+    headers: { 'Retry-After': '60', },
+  },);
+}
+
+// Fail open: rate limiting protects availability, not auth — an outage or
+// error in the limiter itself must not take down the worker. Do NOT change
+// this to fail-closed by analogy with the MCP_API_TOKEN check below.
+async function rateLimit(request: Request, env: Env,): Promise<Response | null> {
+  if (!env.RATE_LIMITER || request.method === 'OPTIONS') { return null; }
+  const url = new URL(request.url,);
+  if (isLoopback(url.hostname,)) { return null; }
+  const key = request.headers.get('CF-Connecting-IP',) ?? 'unknown';
+  try {
+    const { success, } = await env.RATE_LIMITER.limit({ key, },);
+    if (!success) { return rateLimitedResponse(); }
+  } catch {
+    // Limiter unavailable or errored — fail open (see comment above).
+  }
+  return null;
+}
+
 function unauthorizedResponse(url: URL,): Response {
   const origin = `${url.protocol}//${url.host}`;
   // No `scope=` param: discovery.ts's resource metadata and the OAuth provider's
@@ -375,6 +402,9 @@ function stripMeta<T,>(value: T,): T {
 // provider can also gate `/mcp` if a request is ever routed through it.
 export default {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext,): Promise<Response> {
+    const limited = await rateLimit(request, env,);
+    if (limited) { return withHeaders(limited,); }
+
     if (request.url.includes('/oauth/')) {
       const provider = new OAuthProvider(buildOAuthOptions(new URL(request.url,),),);
       return provider.fetch(request, env, ctx as ExecutionContext,);

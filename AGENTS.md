@@ -170,6 +170,16 @@ Two skills are published:
 The SHA-256 digest in the skills index is computed at request time via `crypto.subtle.digest`,
 so it always reflects the actual content served.
 
+## Rate Limiting
+
+The worker enforces 60 requests / 60s per client IP (`CF-Connecting-IP`) on every route via
+Cloudflare's native Rate Limiting binding (`RATE_LIMITER` in `wrangler.jsonc`/`src/types.ts`) —
+not the WAF "Rate Limiting Rules" product. Enforcement is per Cloudflare colo and
+eventually-consistent (not exact/billing-grade). Loopback hosts are exempt (local dev). The
+check runs before routing, so it covers `/mcp`, `/oauth/*`, and the discovery/landing routes
+alike. If the binding is missing or errors, the worker fails open (serves the request) rather
+than fail-closed, since this protects availability, not authentication.
+
 ## Authentication and Security
 
 Azkena supports:
