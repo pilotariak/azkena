@@ -28,6 +28,19 @@
       "id": "0bdfcadf4fc94bc39d09daf8e8e81302"
     }
   ],
+  // Native Cloudflare Rate Limiting binding (not the WAF "Rate Limiting Rules"
+  // product). 60 requests / 60s per client IP, enforced per Cloudflare colo
+  // (best-effort, not billing-grade). `period` only accepts 10 or 60.
+  // Bindings are NOT inherited by named environments, so this is redeclared
+  // under env.staging / env.production below, each with its own namespace_id
+  // so counters aren't shared across environments.
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 60, "period": 60 }
+    }
+  ],
   "env": {
     "staging": {
       "name": "azkena-staging",
@@ -35,7 +48,14 @@
         "ENVIRONMENT": "staging",
         "FRONTIS_URL": "https://frontis-gateway.pilotariak.com/graphql",
         "LOG_LEVEL": "debug"
-      }
+      },
+      "ratelimits": [
+        {
+          "name": "RATE_LIMITER",
+          "namespace_id": "1002",
+          "simple": { "limit": 60, "period": 60 }
+        }
+      ]
     },
     "production": {
       "name": "azkena",
@@ -49,7 +69,14 @@
         "ENVIRONMENT": "production",
         "FRONTIS_URL": "https://frontis-gateway.pilotariak.com/graphql",
         "LOG_LEVEL": "info"
-      }
+      },
+      "ratelimits": [
+        {
+          "name": "RATE_LIMITER",
+          "namespace_id": "1003",
+          "simple": { "limit": 60, "period": 60 }
+        }
+      ]
     }
   },
   "observability": {
