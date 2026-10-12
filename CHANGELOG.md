@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/pilotariak/azkena/compare/v0.3.0...v0.4.0) (2026-10-12)
+
+
+### 🚀 Features
+
+* **frontis:** filter enabled competitions, categories, specialties ([#36](https://github.com/pilotariak/azkena/issues/36)) ([11cc5b7](https://github.com/pilotariak/azkena/commit/11cc5b787b3c8d4720e791584b412ad93fa2ca10))
+
 ## [0.3.0](https://github.com/pilotariak/azkena/compare/azkena-v0.2.0...azkena-v0.3.0) (2026-10-09)
 
 
